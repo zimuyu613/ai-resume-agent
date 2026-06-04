@@ -6,7 +6,9 @@ from google import genai
 from prompts import (
     SYSTEM_PROMPT,
     COMPREHENSIVE_ANALYSIS_PROMPT,
+    RAG_ANALYSIS_PROMPT,
 )
+from rag import retrieve_relevant_chunks
 
 # 读取 .env 文件中的环境变量
 load_dotenv()
@@ -137,4 +139,79 @@ def run_agent_workflow(job_description: str, resume_text: str) -> dict:
         "match_analysis": match_analysis,
         "suggestions": suggestions,
         "full_report": full_report,
+    }
+
+
+def _build_error_result(message: str) -> dict:
+    """把错误信息包装成页面可展示的四个 Tab，避免 Streamlit 页面崩溃。"""
+    error_text = f"RAG 检索增强分析暂时无法完成，可能是 Gemini API 免费额度或请求频率限制。请稍后重试，或关闭 RAG 模式使用普通分析。\n\n错误详情：{message}"
+    return {
+        "job_analysis": error_text,
+        "resume_analysis": error_text,
+        "match_analysis": error_text,
+        "suggestions": error_text,
+        "full_report": error_text,
+        "error": error_text,
+    }
+
+
+def run_rag_workflow(job_description: str, resume_text: str) -> dict:
+    """
+    RAG 增强版分析流程：
+    1. 根据岗位描述召回最相关的简历片段
+    2. 将岗位描述和片段填入 RAG Prompt
+    3. 调用 Gemini 生成完整报告
+    4. 复用 extract_section 拆分为四个页面 Tab
+    """
+    try:
+        retrieved_context = retrieve_relevant_chunks(
+            job_description=job_description,
+            resume_text=resume_text,
+            top_k=3,
+        )
+    except Exception as e:
+        return _build_error_result(str(e))
+
+    if not retrieved_context.strip():
+        return _build_error_result("没有召回到与岗位描述相关的简历片段，请检查简历文本是否足够完整。")
+
+    prompt = RAG_ANALYSIS_PROMPT.format(
+        job_description=job_description[:4000],
+        retrieved_context=retrieved_context,
+    )
+
+    full_report = call_llm(prompt)
+
+    job_analysis = extract_section(
+        full_report,
+        "岗位要求分析",
+        "个人能力分析",
+    )
+
+    resume_analysis = extract_section(
+        full_report,
+        "个人能力分析",
+        "匹配度分析",
+    )
+
+    match_analysis = extract_section(
+        full_report,
+        "匹配度分析",
+        "简历优化建议",
+    )
+
+    suggestions = extract_section(
+        full_report,
+        "简历优化建议",
+        None,
+    )
+
+    return {
+        "job_analysis": job_analysis,
+        "resume_analysis": resume_analysis,
+        "match_analysis": match_analysis,
+        "suggestions": suggestions,
+        "full_report": full_report,
+        "retrieved_context": retrieved_context,
+        "retrieved_chunk_count": retrieved_context.count("[相关片段"),
     }

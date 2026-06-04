@@ -3,7 +3,8 @@ from io import BytesIO
 from pypdf import PdfReader
 from docx import Document
 
-from agent import run_agent_workflow
+from agent import run_agent_workflow, run_rag_workflow
+from rag import get_embedding_provider
 
 
 def read_txt_file(file_bytes: bytes) -> str:
@@ -110,6 +111,18 @@ st.info(
     "建议输入内容保持精简，以保证分析稳定性。"
 )
 
+rag_enabled = st.checkbox(
+    "启用 RAG 检索增强分析",
+    value=False,
+    help="RAG 模式会先从上传简历中检索与岗位最相关的片段，再交给大模型生成分析结果。",
+)
+
+current_embedding_provider = get_embedding_provider()
+
+st.caption("RAG 模式会先从上传简历中检索与岗位最相关的片段，再交给大模型生成分析结果。")
+st.caption("RAG 模式支持本地 Embedding fallback。Gemini Embedding 免费 API 层级可能出现请求频率限制，如失败会自动使用本地向量，或可关闭 RAG 使用普通分析。")
+st.caption(f"当前 RAG 向量模式：{current_embedding_provider}")
+
 with st.sidebar:
     st.header("项目说明")
     st.write("这是一个用于学习 AI Agent Workflow 的小型原型项目。")
@@ -119,6 +132,7 @@ with st.sidebar:
     st.write("- 匹配度分析")
     st.write("- 简历优化建议")
     st.write("- txt / pdf / docx 简历文件上传")
+    st.write("- 可选 RAG 检索增强分析")
     st.write("")
     st.write("后续可扩展：")
     st.write("- RAG 文档检索")
@@ -174,9 +188,17 @@ if st.button("开始分析"):
         st.warning("请先输入岗位描述，并上传或填写个人经历。")
     else:
         with st.spinner("正在分析中，请稍等..."):
-            result = run_agent_workflow(job_description, final_resume_text)
+            if rag_enabled:
+                result = run_rag_workflow(job_description, final_resume_text)
+            else:
+                result = run_agent_workflow(job_description, final_resume_text)
 
-        st.success("分析完成")
+        if result.get("error"):
+            st.error(result["error"])
+        else:
+            st.success("分析完成")
+            if rag_enabled and result.get("retrieved_chunk_count") is not None:
+                st.info(f"本次 RAG 检索召回了 {result['retrieved_chunk_count']} 个简历片段。")
 
         tab1, tab2, tab3, tab4 = st.tabs(
             ["岗位要求分析", "个人能力分析", "匹配度分析", "简历优化建议"]
