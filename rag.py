@@ -18,15 +18,18 @@ CHROMA_DIR = Path(__file__).parent / "chroma_db"
 COLLECTION_NAME = "resume_chunks"
 EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "local").strip().lower()
+LOCAL_EMBEDDING_MODEL = os.getenv("LOCAL_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
 RESUME_TEXT_LIMIT = 8000
 MAX_CHUNKS = 12
 DEFAULT_TOP_K = 3
+
+_local_bge_model = None
 
 
 def get_embedding_provider() -> str:
     """读取当前 RAG 向量模式；默认 local，避免免费 Gemini Embedding 继续触发 429。"""
     provider = os.getenv("EMBEDDING_PROVIDER", EMBEDDING_PROVIDER).strip().lower()
-    return provider if provider in {"local", "gemini"} else "local"
+    return provider if provider in {"local", "local_bge", "gemini"} else "local"
 
 
 def split_text(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[str]:
@@ -123,6 +126,37 @@ def get_local_embedding(text: str, dim: int = 384) -> list[float]:
     return [value / norm for value in vector]
 
 
+def _encode_local_bge_embedding(text: str) -> list[float]:
+    """严格使用 local_bge 生成向量；失败时抛出异常，由调用方决定是否整批 fallback。"""
+    global _local_bge_model
+
+    if _local_bge_model is None:
+        from sentence_transformers import SentenceTransformer
+
+        print(f"正在加载本地语义 embedding 模型：{LOCAL_EMBEDDING_MODEL}")
+        _local_bge_model = SentenceTransformer(LOCAL_EMBEDDING_MODEL)
+
+    embedding = _local_bge_model.encode(
+        text or "",
+        normalize_embeddings=True,
+    )
+
+    return [float(value) for value in embedding.tolist()]
+
+
+def get_local_bge_embedding(text: str) -> list[float]:
+    """
+    使用 sentence-transformers 本地语义模型生成向量。
+    如果模型导入、下载、加载或推理失败，自动 fallback 到本地 hash embedding。
+    """
+    try:
+        return _encode_local_bge_embedding(text)
+
+    except Exception as e:
+        print(f"local_bge embedding 加载或生成失败，已 fallback 到 local hash embedding：{e}")
+        return get_local_embedding(text)
+
+
 def _embed_text(text: str, task_type: str | None = None) -> list[float]:
     """
     调用 Gemini Embedding 模型。
@@ -169,19 +203,26 @@ def _embed_text(text: str, task_type: str | None = None) -> list[float]:
 def get_embedding(text: str) -> list[float]:
     """
     对外暴露的通用文本向量化函数。
-    默认使用 local；配置 EMBEDDING_PROVIDER=gemini 时优先 Gemini，限流后自动 fallback 到 local。
+    默认使用 local；支持 local_bge 和 gemini，失败时 fallback 到 local。
     """
-    if get_embedding_provider() == "local":
+    provider = get_embedding_provider()
+
+    if provider == "local":
         print("RAG embedding provider: local hash embedding")
         return get_local_embedding(text)
+
+    if provider == "local_bge":
+        print("RAG embedding provider: local_bge")
+        return get_local_bge_embedding(text)
 
     try:
         return _embed_text(text, task_type=None)
     except RuntimeError as e:
         if _is_resource_exhausted_error(e):
             print("Gemini Embedding 额度或频率受限，已自动切换到本地 hash embedding fallback。")
-            return get_local_embedding(text)
-        raise
+        else:
+            print(f"Gemini Embedding 调用失败，已自动切换到本地 hash embedding fallback：{e}")
+        return get_local_embedding(text)
 
 
 def _embed_texts_for_rag(
@@ -191,19 +232,28 @@ def _embed_texts_for_rag(
 ) -> tuple[list[list[float]], str]:
     """
     为一次 RAG 流程批量生成向量。
-    如果 Gemini 发生 429/额度限制，整批切换到 local，避免同一 collection 混用不同维度。
+    如果 local_bge 或 Gemini 失败，整批切换到 local，避免同一 collection 混用不同维度。
     """
     provider = provider_override or get_embedding_provider()
+
     if provider == "local":
         return [get_local_embedding(text) for text in texts], "local"
+
+    if provider == "local_bge":
+        try:
+            return [_encode_local_bge_embedding(text) for text in texts], "local_bge"
+        except Exception as e:
+            print(f"local_bge 批量生成失败，本次 RAG 已使用 local hash embedding：{e}")
+            return [get_local_embedding(text) for text in texts], "local"
 
     try:
         return [_embed_text(text, task_type=task_type) for text in texts], "gemini"
     except RuntimeError as e:
         if _is_resource_exhausted_error(e):
             print("Gemini Embedding 额度或频率受限，本次 RAG 已使用本地 hash embedding fallback。")
-            return [get_local_embedding(text) for text in texts], "local"
-        raise
+        else:
+            print(f"Gemini Embedding 批量生成失败，本次 RAG 已使用 local hash embedding：{e}")
+        return [get_local_embedding(text) for text in texts], "local"
 
 
 def _get_chroma_client():
@@ -287,15 +337,27 @@ def retrieve_relevant_chunks_with_sources(
 
     if provider_used == "local":
         query_embedding = get_local_embedding(job_description)
+    elif provider_used == "local_bge":
+        try:
+            query_embedding = _encode_local_bge_embedding(job_description)
+        except Exception as e:
+            # 查询阶段 local_bge 失败时，重建本地 hash collection，确保查询和文档向量维度一致。
+            print(f"local_bge 查询 embedding 失败，本次 RAG 已重建为 local hash embedding：{e}")
+            collection, provider_used = build_resume_collection(
+                resume_text,
+                source_name=source_name,
+                provider_override="local",
+            )
+            query_embedding = get_local_embedding(job_description)
     else:
         try:
             query_embedding = _embed_text(job_description, task_type="RETRIEVAL_QUERY")
         except RuntimeError as e:
-            if not _is_resource_exhausted_error(e):
-                raise
-
-            # 查询阶段 Gemini 限流时，重建本地 collection，确保查询和文档向量维度一致。
-            print("Gemini 查询 embedding 触发限流，本次 RAG 已重建为本地 hash embedding。")
+            # 查询阶段 Gemini 失败时，重建本地 hash collection，确保查询和文档向量维度一致。
+            if _is_resource_exhausted_error(e):
+                print("Gemini 查询 embedding 触发限流，本次 RAG 已重建为本地 hash embedding。")
+            else:
+                print(f"Gemini 查询 embedding 失败，本次 RAG 已重建为本地 hash embedding：{e}")
             collection, provider_used = build_resume_collection(
                 resume_text,
                 source_name=source_name,

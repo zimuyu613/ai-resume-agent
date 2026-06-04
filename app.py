@@ -122,6 +122,8 @@ current_embedding_provider = get_embedding_provider()
 st.caption("RAG 模式会先从上传简历中检索与岗位最相关的片段，再交给大模型生成分析结果。")
 st.caption("RAG 模式支持本地 Embedding fallback。Gemini Embedding 免费 API 层级可能出现请求频率限制，如失败会自动使用本地向量，或可关闭 RAG 使用普通分析。")
 st.caption(f"当前 RAG 向量模式：{current_embedding_provider}")
+if current_embedding_provider == "local_bge":
+    st.caption("首次使用本地语义模型可能需要下载模型，耗时较长；下载完成后会使用本地缓存。")
 
 with st.sidebar:
     st.header("项目说明")
