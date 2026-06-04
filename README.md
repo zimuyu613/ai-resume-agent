@@ -34,3 +34,5 @@ resume-agent/
 ├─ .gitignore
 ├─ README.md
 └─ screenshots/
+
+新增 txt、pdf、docx 简历文件上传与文本解析功能，支持用户上传简历后直接进行岗位匹配分析。
