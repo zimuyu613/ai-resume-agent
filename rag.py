@@ -218,6 +218,7 @@ def _get_chroma_client():
 
 def build_resume_collection(
     resume_text: str,
+    source_name: str = "简历文本",
     max_chunks: int = MAX_CHUNKS,
     provider_override: str | None = None,
 ):
@@ -256,7 +257,12 @@ def build_resume_collection(
         documents=chunks,
         embeddings=embeddings,
         metadatas=[
-            {"source": "resume", "chunk_index": index, "embedding_provider": provider_used}
+            {
+                "source": "resume",
+                "source_name": source_name,
+                "chunk_index": index + 1,
+                "embedding_provider": provider_used,
+            }
             for index in range(len(chunks))
         ],
     )
@@ -264,12 +270,20 @@ def build_resume_collection(
     return collection, provider_used
 
 
-def retrieve_relevant_chunks(job_description: str, resume_text: str, top_k: int = DEFAULT_TOP_K) -> str:
+def retrieve_relevant_chunks_with_sources(
+    job_description: str,
+    resume_text: str,
+    source_name: str = "简历文本",
+    top_k: int = DEFAULT_TOP_K,
+) -> dict:
     """
     根据岗位描述，从当前简历 collection 中召回最相关的片段。
-    返回格式化后的上下文文本，供后续 Prompt 使用。
+    返回给模型使用的上下文，以及页面可展示的来源片段信息。
     """
-    collection, provider_used = build_resume_collection(resume_text)
+    collection, provider_used = build_resume_collection(
+        resume_text,
+        source_name=source_name,
+    )
 
     if provider_used == "local":
         query_embedding = get_local_embedding(job_description)
@@ -282,22 +296,64 @@ def retrieve_relevant_chunks(job_description: str, resume_text: str, top_k: int 
 
             # 查询阶段 Gemini 限流时，重建本地 collection，确保查询和文档向量维度一致。
             print("Gemini 查询 embedding 触发限流，本次 RAG 已重建为本地 hash embedding。")
-            collection, provider_used = build_resume_collection(resume_text, provider_override="local")
+            collection, provider_used = build_resume_collection(
+                resume_text,
+                source_name=source_name,
+                provider_override="local",
+            )
             query_embedding = get_local_embedding(job_description)
 
     result_count = min(max(top_k, 1), collection.count())
     results = collection.query(
         query_embeddings=[query_embedding],
         n_results=result_count,
+        include=["documents", "metadatas", "distances"],
     )
 
     documents = results.get("documents", [[]])[0] if results else []
-    chunks = [doc.strip() for doc in documents if doc and doc.strip()]
+    metadatas = results.get("metadatas", [[]])[0] if results else []
+    distances = results.get("distances", [[]])[0] if results else []
 
-    if not chunks:
-        return ""
+    sources = []
+    context_parts = []
 
-    return "\n\n".join(
-        f"[相关片段 {index}]\n{chunk}"
-        for index, chunk in enumerate(chunks, start=1)
+    for index, document in enumerate(documents, start=1):
+        text = (document or "").strip()
+        if not text:
+            continue
+
+        metadata = metadatas[index - 1] if index - 1 < len(metadatas) else {}
+        distance = distances[index - 1] if index - 1 < len(distances) else None
+        chunk_index = metadata.get("chunk_index", index)
+        source_display_name = metadata.get("source_name", source_name)
+
+        context_parts.append(f"[相关片段 {index} | 来源：{source_display_name} | chunk_index：{chunk_index}]\n{text}")
+        source_item = {
+            "chunk_index": chunk_index,
+            "source_name": source_display_name,
+            "text": text,
+        }
+
+        if distance is not None:
+            source_item["distance"] = distance
+
+        sources.append(source_item)
+
+    return {
+        "context": "\n\n".join(context_parts),
+        "sources": sources,
+        "embedding_provider": provider_used,
+    }
+
+
+def retrieve_relevant_chunks(job_description: str, resume_text: str, top_k: int = DEFAULT_TOP_K) -> str:
+    """
+    兼容旧调用：只返回拼接后的 RAG 上下文文本。
+    """
+    result = retrieve_relevant_chunks_with_sources(
+        job_description=job_description,
+        resume_text=resume_text,
+        top_k=top_k,
     )
+
+    return result["context"]

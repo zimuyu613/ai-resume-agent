@@ -154,8 +154,10 @@ uploaded_file = st.file_uploader(
 )
 
 uploaded_resume_text = ""
+uploaded_source_name = ""
 
 if uploaded_file is not None:
+    uploaded_source_name = uploaded_file.name
     uploaded_resume_text = read_uploaded_resume_file(uploaded_file)
 
     if (
@@ -182,6 +184,7 @@ resume_text_input = st.text_area(
 
 # 优先使用上传文件内容；如果没有上传文件，则使用手动输入内容
 final_resume_text = uploaded_resume_text.strip() if uploaded_resume_text.strip() else resume_text_input.strip()
+source_name = uploaded_source_name if uploaded_resume_text.strip() else "手动输入内容"
 
 if st.button("开始分析"):
     if not job_description.strip() or not final_resume_text:
@@ -189,7 +192,11 @@ if st.button("开始分析"):
     else:
         with st.spinner("正在分析中，请稍等..."):
             if rag_enabled:
-                result = run_rag_workflow(job_description, final_resume_text)
+                result = run_rag_workflow(
+                    job_description,
+                    final_resume_text,
+                    source_name=source_name,
+                )
             else:
                 result = run_agent_workflow(job_description, final_resume_text)
 
@@ -199,6 +206,38 @@ if st.button("开始分析"):
             st.success("分析完成")
             if rag_enabled and result.get("retrieved_chunk_count") is not None:
                 st.info(f"本次 RAG 检索召回了 {result['retrieved_chunk_count']} 个简历片段。")
+
+            rag_sources = result.get("rag_sources", [])
+            if rag_enabled and rag_sources:
+                with st.expander("查看 RAG 检索片段"):
+                    show_full_rag_chunks = st.checkbox(
+                        "显示完整 RAG 片段内容",
+                        value=False,
+                        key="show_full_rag_chunks",
+                    )
+
+                    for index, source in enumerate(rag_sources, start=1):
+                        st.markdown(f"**片段 {index}**")
+                        st.write(f"来源：{source.get('source_name', '未知来源')}")
+                        st.write(f"chunk_index：{source.get('chunk_index', index)}")
+
+                        if source.get("distance") is not None:
+                            st.write(f"distance：{source['distance']:.4f}")
+                        else:
+                            st.write("distance：未返回")
+
+                        chunk_text = source.get("text", "")
+                        preview_text = chunk_text
+                        if not show_full_rag_chunks and len(chunk_text) > 400:
+                            preview_text = f"{chunk_text[:400]}……"
+
+                        st.text_area(
+                            f"片段内容预览 {index}",
+                            value=preview_text,
+                            height=140,
+                            disabled=True,
+                            key=f"rag_source_{index}",
+                        )
 
         tab1, tab2, tab3, tab4 = st.tabs(
             ["岗位要求分析", "个人能力分析", "匹配度分析", "简历优化建议"]

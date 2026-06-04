@@ -8,7 +8,7 @@ from prompts import (
     COMPREHENSIVE_ANALYSIS_PROMPT,
     RAG_ANALYSIS_PROMPT,
 )
-from rag import retrieve_relevant_chunks
+from rag import retrieve_relevant_chunks_with_sources
 
 # 读取 .env 文件中的环境变量
 load_dotenv()
@@ -152,10 +152,12 @@ def _build_error_result(message: str) -> dict:
         "suggestions": error_text,
         "full_report": error_text,
         "error": error_text,
+        "rag_sources": [],
+        "retrieved_chunk_count": 0,
     }
 
 
-def run_rag_workflow(job_description: str, resume_text: str) -> dict:
+def run_rag_workflow(job_description: str, resume_text: str, source_name: str = "简历文本") -> dict:
     """
     RAG 增强版分析流程：
     1. 根据岗位描述召回最相关的简历片段
@@ -164,13 +166,17 @@ def run_rag_workflow(job_description: str, resume_text: str) -> dict:
     4. 复用 extract_section 拆分为四个页面 Tab
     """
     try:
-        retrieved_context = retrieve_relevant_chunks(
+        retrieval_result = retrieve_relevant_chunks_with_sources(
             job_description=job_description,
             resume_text=resume_text,
+            source_name=source_name,
             top_k=3,
         )
     except Exception as e:
         return _build_error_result(str(e))
+
+    retrieved_context = retrieval_result.get("context", "")
+    sources = retrieval_result.get("sources", [])
 
     if not retrieved_context.strip():
         return _build_error_result("没有召回到与岗位描述相关的简历片段，请检查简历文本是否足够完整。")
@@ -213,5 +219,7 @@ def run_rag_workflow(job_description: str, resume_text: str) -> dict:
         "suggestions": suggestions,
         "full_report": full_report,
         "retrieved_context": retrieved_context,
-        "retrieved_chunk_count": retrieved_context.count("[相关片段"),
+        "retrieved_chunk_count": len(sources),
+        "rag_sources": sources,
+        "embedding_provider": retrieval_result.get("embedding_provider"),
     }

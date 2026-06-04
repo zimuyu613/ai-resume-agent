@@ -23,6 +23,7 @@
 - 短期学习计划生成
 - 可选 RAG 检索增强分析
 - RAG 支持本地 hash embedding fallback，避免演示时被 Gemini Embedding 免费额度限制卡住
+- RAG 分析完成后会显示检索片段预览，便于查看系统基于哪些简历内容生成分析结果
 
 ## RAG 向量模式
 
@@ -44,6 +45,8 @@ GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 ```
 
 普通分析模式仍然只调用 Gemini 文本生成模型，不受 RAG 向量模式影响。
+
+RAG 分析完成后，页面会提供“查看 RAG 检索片段”展开区，展示本次召回的简历片段、来源文件名、chunk_index 和 distance 信息，方便核对模型依据。
 
 ## 项目结构
 
