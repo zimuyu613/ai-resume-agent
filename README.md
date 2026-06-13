@@ -74,6 +74,23 @@ cd D:\AIProjects\resume-agent
 http://localhost:8501
 ```
 
+### 方式一：命令行启动
+
+```powershell
+cd D:\AIProjects\resume-agent
+.\.venv\Scripts\python.exe -m streamlit run app.py
+```
+
+### 方式二：双击启动
+
+在项目根目录双击：
+
+```text
+run_app.bat
+```
+
+如果窗口提示未找到 `.venv\Scripts\python.exe`，请先创建虚拟环境并安装依赖。
+
 ## .env 配置
 
 复制 `.env.example` 为 `.env`，并填写自己的 Gemini API Key：
