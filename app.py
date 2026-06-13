@@ -45,22 +45,46 @@ def build_export_report(result: dict, rag_enabled: bool) -> str:
     ]
 
     if rag_enabled and result.get("rag_sources"):
-        sections.extend(["", "## RAG 检索片段摘要", ""])
+        top_k = result.get("rag_top_k", len(result.get("rag_sources", [])))
+        actual_count = len(result.get("rag_sources", []))
+        total_chunks = result.get("rag_total_chunks", actual_count)
+        sections.extend(
+            [
+                "",
+                "## RAG 检索说明",
+                "",
+                f"本次 RAG 检索召回 top_k = {top_k} 个片段。",
+                f"- 本次简历生成 chunk 数量：{total_chunks}",
+                f"- 用户设置 top_k：{top_k}",
+                f"- 实际召回片段数量：{actual_count}",
+                "以下片段作为大模型分析的参考上下文。",
+                "",
+            ]
+        )
+        if actual_count < top_k:
+            sections.extend(
+                [
+                    "实际召回数量少于 top_k，原因通常是可检索 chunk 总数不足。",
+                    "",
+                ]
+            )
         for index, source in enumerate(result["rag_sources"], start=1):
             distance = source.get("distance")
             distance_text = f"{distance:.4f}" if distance is not None else "未返回"
-            preview = source.get("text", "")[:400]
-            if len(source.get("text", "")) > 400:
+            preview = source.get("text", "")[:300]
+            if len(source.get("text", "")) > 300:
                 preview += "……"
 
             sections.extend(
                 [
                     f"### 片段 {index}",
-                    f"- 来源：{source.get('source_name', '未知来源')}",
-                    f"- chunk_index：{source.get('chunk_index', index)}",
+                    f"- chunk_id：{source.get('chunk_id', source.get('chunk_index', index))}",
+                    f"- source：{source.get('source', 'resume')}",
+                    f"- file_name：{source.get('file_name', source.get('source_name', '未知来源'))}",
+                    f"- chunk_length：{source.get('chunk_length', len(source.get('text', '')))}",
                     f"- distance：{distance_text}",
                     "",
-                    preview,
+                    f"内容摘要：{preview}",
                     "",
                 ]
             )
@@ -253,6 +277,10 @@ def render_analysis_page() -> None:
         value=False,
         help="RAG 模式会先从简历中检索相关片段，再生成分析结果。",
     )
+    rag_top_k = 3
+    if rag_enabled:
+        rag_top_k = st.slider("RAG 召回片段数量 top_k", min_value=1, max_value=8, value=3)
+        st.caption("top_k 表示从向量数据库中召回最相关的前 k 个简历片段。")
 
     if st.button("开始分析"):
         if not job_description.strip() or not final_resume_text:
@@ -264,6 +292,7 @@ def render_analysis_page() -> None:
                         job_description,
                         final_resume_text,
                         source_name=source_name,
+                        top_k=rag_top_k,
                     )
                 else:
                     result = run_agent_workflow(job_description, final_resume_text)
@@ -281,7 +310,18 @@ def render_analysis_page() -> None:
         else:
             st.success("分析完成")
             if result_rag_enabled and result.get("retrieved_chunk_count") is not None:
-                st.info(f"本次 RAG 检索召回了 {result['retrieved_chunk_count']} 个简历片段。")
+                actual_count = result.get("retrieved_chunk_count", 0)
+                top_k = result.get("rag_top_k", actual_count)
+                total_chunks = result.get("rag_total_chunks", actual_count)
+
+                st.info(
+                    f"本次简历共生成 {total_chunks} 个 chunk。"
+                    f"用户设置 top_k = {top_k}。"
+                    f"实际召回 {actual_count} 个片段。"
+                )
+
+                if actual_count < top_k:
+                    st.warning("实际召回数量少于 top_k，通常是因为当前简历切分后的 chunk 总数不足。")
 
             rag_sources = result.get("rag_sources", [])
             if result_rag_enabled and rag_sources:
@@ -294,11 +334,13 @@ def render_analysis_page() -> None:
 
                     for index, source in enumerate(rag_sources, start=1):
                         st.markdown(f"**片段 {index}**")
-                        st.write(f"来源：{source.get('source_name', '未知来源')}")
-                        st.write(f"chunk_index：{source.get('chunk_index', index)}")
+                        st.write(f"source：{source.get('source', 'resume')}")
+                        st.write(f"file_name：{source.get('file_name', source.get('source_name', '未知来源'))}")
+                        st.write(f"chunk_id：{source.get('chunk_id', source.get('chunk_index', index))}")
+                        st.write(f"chunk_length：{source.get('chunk_length', len(source.get('text', '')))}")
 
                         if source.get("distance") is not None:
-                            st.write(f"distance：{source['distance']:.4f}")
+                            st.write(f"检索距离 distance：{source['distance']:.4f}（数值越小通常表示越相关）")
                         else:
                             st.write("distance：未返回")
 

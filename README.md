@@ -132,6 +132,21 @@ RAG 模式会执行以下步骤：
 
 当前默认 top_k 为 3，并限制最大处理 chunk 数，避免免费 API 或长文本导致不稳定。
 
+### RAG 参数与可解释性
+
+- chunk：简历文本切分后的片段，是写入向量数据库和检索召回的基本单位。
+- overlap：相邻 chunk 的重叠区域，用于减少关键信息刚好被切断的问题。
+- top_k：从 ChromaDB 中召回最相关的前 k 个片段。页面中可以在 RAG 模式下调整，默认值为 3。
+- metadata：每个 chunk 会保存来源和位置等信息，例如 `source`、`chunk_id`、`file_name`、`char_start`、`char_end`、`chunk_length`。这些信息用于解释模型参考了哪些简历内容。
+- distance：ChromaDB 返回的检索距离，数值越小通常表示越相关。不同 embedding 模式下 distance 的绝对值不一定可直接横向比较，更适合作为同一次检索中的参考。
+
+当前 RAG 仍有一些不足：
+
+- 还没有 rerank，召回结果完全依赖向量相似度。
+- 还没有系统化检索质量评估。
+- metadata 过滤还比较基础，暂未按教育背景、项目经历、技能等 section 精细过滤。
+- local hash embedding 语义能力有限，更适合作为稳定兜底。
+
 ## 运行测试
 
 项目提供了一个最小测试脚本：
@@ -195,4 +210,3 @@ GEMINI_MODEL=gemini-2.5-flash
 - 增加 Trace / 日志面板
 - 增加 Tool Calling 示例
 - 增加更多模型 provider，降低 Gemini 单点依赖
-

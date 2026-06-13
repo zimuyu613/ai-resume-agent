@@ -196,7 +196,7 @@ def _build_error_result(message: str) -> dict:
     }
 
 
-def run_rag_workflow(job_description: str, resume_text: str, source_name: str = "简历文本") -> dict:
+def run_rag_workflow(job_description: str, resume_text: str, source_name: str = "简历文本", top_k: int = 3) -> dict:
     """
     RAG 增强版分析流程：
     1. 根据岗位描述召回最相关的简历片段
@@ -209,7 +209,7 @@ def run_rag_workflow(job_description: str, resume_text: str, source_name: str = 
             job_description=job_description,
             resume_text=resume_text,
             source_name=source_name,
-            top_k=3,
+            top_k=top_k,
         )
     except Exception as e:
         return _build_error_result(str(e))
@@ -261,4 +261,6 @@ def run_rag_workflow(job_description: str, resume_text: str, source_name: str = 
         "retrieved_chunk_count": len(sources),
         "rag_sources": sources,
         "embedding_provider": retrieval_result.get("embedding_provider"),
+        "rag_top_k": top_k,
+        "rag_total_chunks": retrieval_result.get("total_chunks"),
     }

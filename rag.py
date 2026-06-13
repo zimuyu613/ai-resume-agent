@@ -32,10 +32,10 @@ def get_embedding_provider() -> str:
     return provider if provider in {"local", "local_bge", "gemini"} else "local"
 
 
-def split_text(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[str]:
+def build_chunk_records(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[dict]:
     """
-    将中英文简历文本切成适合向量检索的小片段。
-    优先按句子边界切分，避免产生空字符串。
+    将中英文简历文本切成带 metadata 的 chunk 记录。
+    char_start/char_end 基于清洗后的文本位置，用于解释 chunk 来源范围。
     """
     cleaned_text = re.sub(r"\s+", " ", text or "").strip()
     if not cleaned_text:
@@ -45,7 +45,7 @@ def split_text(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[st
         raise ValueError("chunk_size 必须大于 0")
 
     overlap = max(0, min(overlap, chunk_size - 1))
-    chunks: list[str] = []
+    records: list[dict] = []
     start = 0
 
     while start < len(cleaned_text):
@@ -71,14 +71,31 @@ def split_text(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[st
 
         chunk = chunk.strip()
         if chunk:
-            chunks.append(chunk)
+            records.append(
+                {
+                    "text": chunk,
+                    "chunk_id": len(records),
+                    "char_start": start,
+                    "char_end": end,
+                    "chunk_length": len(chunk),
+                    "section": "unknown",
+                }
+            )
 
         if end >= len(cleaned_text):
             break
 
         start = max(end - overlap, start + 1)
 
-    return chunks
+    return records
+
+
+def split_text(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[str]:
+    """
+    将中英文简历文本切成适合向量检索的小片段。
+    优先按句子边界切分，避免产生空字符串。
+    """
+    return [record["text"] for record in build_chunk_records(text, chunk_size, overlap)]
 
 
 def _is_resource_exhausted_error(error: Exception) -> bool:
@@ -278,12 +295,14 @@ def build_resume_collection(
     """
     # 限制进入 RAG 的简历长度，避免长简历一次分析触发过多 Embedding 调用。
     resume_text = (resume_text or "")[:RESUME_TEXT_LIMIT]
-    chunks = split_text(resume_text)
-    if not chunks:
+    chunk_records = build_chunk_records(resume_text)
+    if not chunk_records:
         raise RuntimeError("简历文本为空，无法构建 RAG 检索库。")
 
-    if len(chunks) > max_chunks:
-        chunks = chunks[:max_chunks]
+    if len(chunk_records) > max_chunks:
+        chunk_records = chunk_records[:max_chunks]
+
+    chunks = [record["text"] for record in chunk_records]
 
     client = _get_chroma_client()
 
@@ -310,10 +329,16 @@ def build_resume_collection(
             {
                 "source": "resume",
                 "source_name": source_name,
+                "file_name": source_name,
                 "chunk_index": index + 1,
+                "chunk_id": record["chunk_id"],
+                "char_start": record["char_start"],
+                "char_end": record["char_end"],
+                "chunk_length": record["chunk_length"],
+                "section": record["section"],
                 "embedding_provider": provider_used,
             }
-            for index in range(len(chunks))
+            for index, record in enumerate(chunk_records)
         ],
     )
 
@@ -387,12 +412,21 @@ def retrieve_relevant_chunks_with_sources(
         metadata = metadatas[index - 1] if index - 1 < len(metadatas) else {}
         distance = distances[index - 1] if index - 1 < len(distances) else None
         chunk_index = metadata.get("chunk_index", index)
+        chunk_id = metadata.get("chunk_id", chunk_index)
         source_display_name = metadata.get("source_name", source_name)
+        file_name = metadata.get("file_name", source_display_name)
 
-        context_parts.append(f"[相关片段 {index} | 来源：{source_display_name} | chunk_index：{chunk_index}]\n{text}")
+        context_parts.append(f"[相关片段 {index} | 来源：{source_display_name} | chunk_id：{chunk_id}]\n{text}")
         source_item = {
             "chunk_index": chunk_index,
+            "chunk_id": chunk_id,
             "source_name": source_display_name,
+            "source": metadata.get("source", "resume"),
+            "file_name": file_name,
+            "char_start": metadata.get("char_start"),
+            "char_end": metadata.get("char_end"),
+            "chunk_length": metadata.get("chunk_length", len(text)),
+            "section": metadata.get("section", "unknown"),
             "text": text,
         }
 
@@ -405,6 +439,7 @@ def retrieve_relevant_chunks_with_sources(
         "context": "\n\n".join(context_parts),
         "sources": sources,
         "embedding_provider": provider_used,
+        "total_chunks": collection.count(),
     }
 
 
