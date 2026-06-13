@@ -20,13 +20,52 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
+def format_llm_error(error: Exception) -> str:
+    """
+    将 Gemini 常见错误转换成面向用户的简洁提示。
+    详细错误保留在控制台，方便开发调试。
+    """
+    error_msg = str(error)
+    error_lower = error_msg.lower()
+    print(f"Gemini 调用详细错误：{error_msg}")
+
+    if "429" in error_msg or "resource_exhausted" in error_lower or "quota" in error_lower:
+        return (
+            "调用模型时出现错误：Gemini API 额度不足或请求过多。"
+            "请稍后重试、降低请求频率，或更换可用的 API Key / 计费方案。"
+        )
+
+    if "user location is not supported" in error_lower or "location is not supported" in error_lower:
+        return (
+            "调用模型时出现错误：当前地区可能不支持 Gemini API。"
+            "请检查网络环境，或切换到可用的模型服务。"
+        )
+
+    model_error_keywords = [
+        "model name",
+        "model not found",
+        "unexpected model name format",
+        "invalid argument",
+    ]
+    if any(keyword in error_lower for keyword in model_error_keywords):
+        return (
+            "调用模型时出现错误：模型名称配置可能不正确。"
+            "请检查 .env 中的 GEMINI_MODEL，例如 gemini-2.5-flash 或 gemini-2.0-flash。"
+        )
+
+    if "api key" in error_lower or "permission_denied" in error_lower or "unauthenticated" in error_lower:
+        return "调用模型时出现错误：API Key 无效或缺少权限，请检查 .env 中的 GEMINI_API_KEY。"
+
+    return "调用模型时出现错误：模型服务暂时不可用，请稍后重试或检查控制台日志。"
+
+
 def call_llm(prompt: str) -> str:
     """
     调用 Gemini 大语言模型并返回文本结果。
     增加简单重试机制，用于处理 503 高负载等临时错误。
     """
     if not os.getenv("GEMINI_API_KEY"):
-        return "错误：未检测到 GEMINI_API_KEY，请先在 .env 文件中配置 Gemini API Key。"
+        return "错误：未检测到 GEMINI_API_KEY，请先在 .env 文件中配置 GEMINI_API_KEY。"
 
     full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
 
@@ -60,7 +99,7 @@ def call_llm(prompt: str) -> str:
                 time.sleep(wait_time)
                 continue
 
-            return f"调用模型时出现错误：{e}"
+            return format_llm_error(e)
 
     return "调用模型失败：当前模型请求量较高，已自动重试多次。请稍后再次点击分析。"
 

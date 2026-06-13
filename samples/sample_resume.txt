@@ -1,0 +1,45 @@
+姓名：张同学
+求职意向：AI 应用开发实习生 / Python 开发实习生 / RAG 应用开发实习生
+
+教育背景
+某某大学 本科 计算机科学与技术 2023.09 - 2027.06
+主修课程：数据结构、操作系统、数据库系统、Python 程序设计、机器学习基础、Web 开发基础、软件工程。
+
+专业技能
+- 编程语言：Python、JavaScript、SQL，了解 Java 基础语法。
+- AI 应用：熟悉 Prompt Engineering 基础方法，了解 RAG 检索增强生成流程，能调用大模型 API 完成文本分析任务。
+- 后端与工具：了解 FastAPI、Streamlit、REST API、Git、dotenv 环境变量管理。
+- 数据与检索：了解 ChromaDB、向量数据库、embedding、文本切分 chunk、top_k 检索和 metadata 管理。
+- 文件处理：能够解析 txt、pdf、docx 文档中的文本内容，了解基础异常处理。
+
+项目经历一：AI Agent 简历与岗位匹配分析助手
+项目简介：基于 Streamlit、Gemini API、ChromaDB 和本地 embedding fallback 开发的简历与岗位匹配分析工具。用户可以上传简历并输入岗位 JD，系统会输出岗位要求分析、个人能力分析、匹配度分析和简历优化建议。
+主要工作：
+- 使用 Streamlit 搭建交互页面，支持 txt、pdf、docx 简历上传和岗位 JD 输入。
+- 使用 pypdf 和 python-docx 解析文件内容，并对简历文本做基础清洗。
+- 设计普通分析模式和 RAG 检索增强模式，支持切换分析方式。
+- 在 RAG 模式中实现文本 chunk 切分、embedding 生成、ChromaDB 向量入库和 top_k 召回。
+- 支持 local hash embedding、local_bge 本地语义 embedding 和 Gemini Embedding 可选配置。
+- 增加 RAG 检索片段预览，展示来源文件名、chunk_index、distance 和片段内容，提升分析可解释性。
+- 对 Gemini API 429、地区不可用、模型名错误等异常做友好提示。
+技术栈：Python、Streamlit、Gemini API、ChromaDB、sentence-transformers、pypdf、python-docx。
+
+项目经历二：Lumoon 多端学习记录应用
+项目简介：面向个人学习管理的多端应用原型，支持学习目标记录、任务状态跟踪和学习数据展示。
+主要工作：
+- 参与前端页面和基础交互设计，整理用户学习路径和页面流程。
+- 使用组件化方式组织页面，提升可维护性。
+- 设计学习记录数据结构，支持任务名称、学习时长、完成状态和备注信息。
+- 通过 Git 管理代码版本，整理 README 和运行说明。
+技术栈：JavaScript、前端组件化、Git、Markdown。
+
+课程与竞赛项目
+- 机器学习课程项目：使用公开数据集完成分类模型训练，理解数据预处理、特征选择、模型评估等基本流程。
+- 数据结构课程项目：实现简单搜索和排序算法可视化，熟悉复杂度分析和调试方法。
+- 校内创新实践：完成一个基于 Python 的文档分析小工具，支持关键词统计和文本摘要实验。
+
+个人优势
+- 对 AI 应用开发、RAG、Prompt Engineering 和 AI Coding 有持续学习兴趣。
+- 能将大模型 API、文件解析、向量数据库和前端页面组合成可运行原型。
+- 具备基础工程意识，关注环境变量、安全配置、错误提示和项目复现。
+

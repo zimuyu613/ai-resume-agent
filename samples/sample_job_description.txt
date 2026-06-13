@@ -1,0 +1,25 @@
+岗位名称：AI 应用开发实习生
+
+岗位职责
+1. 参与 AI 应用原型开发，基于大模型 API 构建文本分析、知识问答、文档理解等功能。
+2. 参与 RAG 检索增强生成流程搭建，包括文档解析、文本切分、embedding 生成、向量数据库入库和召回。
+3. 根据业务场景设计和优化 Prompt，提高模型输出的结构化程度、稳定性和可解释性。
+4. 使用 Streamlit 或 FastAPI 搭建可演示的 AI 应用界面或接口服务。
+5. 参与基础工程化工作，包括配置管理、错误处理、README 编写、示例数据整理和简单测试。
+
+任职要求
+1. 熟悉 Python，能够编写清晰、可维护的脚本或 Web 应用代码。
+2. 了解大模型 API 调用方式，使用过 Gemini、OpenAI、DeepSeek、通义千问或其他 LLM 服务者优先。
+3. 了解 RAG 基础流程，包括 chunk 切分、embedding、top_k 检索、向量数据库和 Prompt 拼接。
+4. 了解 Prompt Engineering，能够根据任务要求设计结构化输出提示词。
+5. 了解至少一种 Web 原型开发方式，如 Streamlit、Gradio 或 FastAPI。
+6. 了解 ChromaDB、FAISS、Milvus 等向量数据库中的一种。
+7. 具备基础工程能力，能够使用 Git、环境变量、requirements.txt 和 README 管理项目。
+
+加分项
+1. 有 AI Agent、Tool Calling 或函数调用相关实践经验。
+2. 使用过 AI Coding 工具辅助开发，并能说明如何验证和调试生成代码。
+3. 有文件解析经验，例如 txt、pdf、docx、网页文本或表格数据解析。
+4. 有基础测试意识，能够为核心函数编写简单测试或测试脚本。
+5. 有完整可运行的 AI 应用项目，并能清楚讲解架构、边界、异常处理和后续优化方向。
+

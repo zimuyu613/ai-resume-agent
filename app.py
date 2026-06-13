@@ -1,10 +1,71 @@
-import streamlit as st
 from io import BytesIO
-from pypdf import PdfReader
+from pathlib import Path
+
+import streamlit as st
 from docx import Document
+from pypdf import PdfReader
 
 from agent import run_agent_workflow, run_rag_workflow
 from rag import get_embedding_provider
+
+
+BASE_DIR = Path(__file__).parent
+SAMPLES_DIR = BASE_DIR / "samples"
+SAMPLE_RESUME_PATH = SAMPLES_DIR / "sample_resume.txt"
+SAMPLE_JOB_PATH = SAMPLES_DIR / "sample_job_description.txt"
+
+
+def load_sample_text(path: Path) -> str:
+    """读取示例文件；如果文件缺失，返回友好提示文本。"""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return f"示例文件不存在：{path}"
+
+
+def load_demo_data() -> None:
+    """将示例简历和岗位 JD 写入 session_state，供分析页直接使用。"""
+    st.session_state["job_description_input"] = load_sample_text(SAMPLE_JOB_PATH)
+    st.session_state["resume_text_input"] = load_sample_text(SAMPLE_RESUME_PATH)
+    st.session_state["demo_mode_enabled"] = True
+
+
+def build_export_report(result: dict, rag_enabled: bool) -> str:
+    """将分析结果整理为 Markdown，供 Streamlit 下载。"""
+    sections = [
+        "# AI 简历与岗位匹配分析报告",
+        "",
+        result.get("job_analysis", ""),
+        "",
+        result.get("resume_analysis", ""),
+        "",
+        result.get("match_analysis", ""),
+        "",
+        result.get("suggestions", ""),
+    ]
+
+    if rag_enabled and result.get("rag_sources"):
+        sections.extend(["", "## RAG 检索片段摘要", ""])
+        for index, source in enumerate(result["rag_sources"], start=1):
+            distance = source.get("distance")
+            distance_text = f"{distance:.4f}" if distance is not None else "未返回"
+            preview = source.get("text", "")[:400]
+            if len(source.get("text", "")) > 400:
+                preview += "……"
+
+            sections.extend(
+                [
+                    f"### 片段 {index}",
+                    f"- 来源：{source.get('source_name', '未知来源')}",
+                    f"- chunk_index：{source.get('chunk_index', index)}",
+                    f"- distance：{distance_text}",
+                    "",
+                    preview,
+                    "",
+                ]
+            )
+
+    return "\n".join(sections).strip() + "\n"
 
 
 def read_txt_file(file_bytes: bytes) -> str:
@@ -94,123 +155,136 @@ def read_uploaded_resume_file(uploaded_file) -> str:
     return "暂不支持该文件格式，请上传 txt、pdf 或 docx 文件。"
 
 
-st.set_page_config(
-    page_title="AI Agent 简历与岗位匹配分析助手",
-    page_icon="🤖",
-    layout="wide",
-)
+def render_home_page() -> None:
+    st.title("AI Resume Agent / 简历与岗位匹配分析助手")
+    st.write(
+        "这是一个基于 Streamlit、Gemini API、ChromaDB 和 RAG Workflow 的简历与岗位匹配分析工具。"
+        "用户可以上传简历并输入岗位 JD，系统会分析岗位要求、个人能力、匹配度和简历优化建议。"
+    )
+    st.info("当前项目定位是 AI 应用工程化 MVP / RAG Workflow 原型，不是完整生产级多工具 Agent。")
 
-st.title("🤖 AI Agent 简历与岗位匹配分析助手")
+    st.subheader("当前能力")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("- txt / pdf / docx 简历解析")
+        st.markdown("- 岗位 JD 输入")
+        st.markdown("- 普通 LLM 分析")
+    with col2:
+        st.markdown("- RAG 检索增强分析")
+        st.markdown("- ChromaDB 向量检索")
+        st.markdown("- local / local_bge / gemini embedding")
+    with col3:
+        st.markdown("- RAG 召回片段查看")
+        st.markdown("- Markdown 报告导出")
+        st.markdown("- 示例数据演示")
 
-st.write(
-    "输入岗位描述和个人经历，系统会分析岗位要求、个人匹配点、能力差距和简历优化建议。"
-)
+    st.subheader("推荐演示路径")
+    st.markdown("1. 进入“示例演示”，加载脱敏样例。")
+    st.markdown("2. 进入“简历岗位匹配分析”，选择普通模式或 RAG 模式。")
+    st.markdown("3. 查看四个分析 Tab、RAG 召回片段和 Markdown 导出报告。")
 
-st.info(
-    "当前版本支持手动输入个人经历，也支持上传 txt、pdf、docx 简历文件。"
-    "建议输入内容保持精简，以保证分析稳定性。"
-)
 
-rag_enabled = st.checkbox(
-    "启用 RAG 检索增强分析",
-    value=False,
-    help="RAG 模式会先从上传简历中检索与岗位最相关的片段，再交给大模型生成分析结果。",
-)
+def render_analysis_page() -> None:
+    st.title("简历岗位匹配分析")
+    st.write("按步骤输入岗位 JD 和简历内容，可选择普通分析或 RAG 检索增强分析。")
 
-current_embedding_provider = get_embedding_provider()
+    current_embedding_provider = get_embedding_provider()
 
-st.caption("RAG 模式会先从上传简历中检索与岗位最相关的片段，再交给大模型生成分析结果。")
-st.caption("RAG 模式支持本地 Embedding fallback。Gemini Embedding 免费 API 层级可能出现请求频率限制，如失败会自动使用本地向量，或可关闭 RAG 使用普通分析。")
-st.caption(f"当前 RAG 向量模式：{current_embedding_provider}")
-if current_embedding_provider == "local_bge":
-    st.caption("首次使用本地语义模型可能需要下载模型，耗时较长；下载完成后会使用本地缓存。")
+    st.caption("RAG 模式会先从简历中检索与岗位最相关的片段，再交给大模型生成分析结果。")
+    st.caption("RAG 模式支持本地 Embedding fallback。Gemini Embedding 免费 API 层级可能出现请求频率限制，如失败会自动使用本地向量。")
+    st.caption(f"当前 RAG 向量模式：{current_embedding_provider}")
+    if current_embedding_provider == "local_bge":
+        st.caption("首次使用本地语义模型可能需要下载模型，耗时较长；下载完成后会使用本地缓存。")
 
-with st.sidebar:
-    st.header("项目说明")
-    st.write("这是一个用于学习 AI Agent Workflow 的小型原型项目。")
-    st.write("当前版本包含：")
-    st.write("- 岗位要求分析")
-    st.write("- 个人能力分析")
-    st.write("- 匹配度分析")
-    st.write("- 简历优化建议")
-    st.write("- txt / pdf / docx 简历文件上传")
-    st.write("- 可选 RAG 检索增强分析")
-    st.write("")
-    st.write("后续可扩展：")
-    st.write("- RAG 文档检索")
-    st.write("- Embedding 向量化")
-    st.write("- ChromaDB / FAISS 向量数据库")
-    st.write("- Tool Calling")
-    st.write("- FastAPI 后端服务化")
+    if st.session_state.get("demo_mode_enabled"):
+        st.info("当前已加载示例数据。你仍然可以上传自己的简历文件，或直接编辑下方文本框内容。")
 
-job_description = st.text_area(
-    "请输入岗位描述",
-    height=240,
-    placeholder="例如：粘贴 AI Agent 开发实习生的岗位描述。",
-)
+    st.subheader("Step 1：输入岗位 JD")
+    job_description = st.text_area(
+        "请输入岗位描述",
+        height=220,
+        placeholder="例如：粘贴 AI 应用开发实习生的岗位描述。",
+        key="job_description_input",
+    )
 
-uploaded_file = st.file_uploader(
-    "上传个人简历 / 经历文件",
-    type=["txt", "pdf", "docx"],
-    help="当前支持 txt、pdf、docx 文件。PDF 需为可复制文字的文本型 PDF。",
-)
+    st.subheader("Step 2：上传或填写简历")
+    uploaded_file = st.file_uploader(
+        "上传个人简历 / 经历文件",
+        type=["txt", "pdf", "docx"],
+        help="当前支持 txt、pdf、docx 文件。PDF 需为可复制文字的文本型 PDF。",
+    )
 
-uploaded_resume_text = ""
-uploaded_source_name = ""
+    uploaded_resume_text = ""
+    uploaded_source_name = ""
 
-if uploaded_file is not None:
-    uploaded_source_name = uploaded_file.name
-    uploaded_resume_text = read_uploaded_resume_file(uploaded_file)
+    if uploaded_file is not None:
+        uploaded_source_name = uploaded_file.name
+        uploaded_resume_text = read_uploaded_resume_file(uploaded_file)
 
-    if (
-        uploaded_resume_text.startswith("文件解码失败")
-        or uploaded_resume_text.startswith("PDF 文件读取失败")
-        or uploaded_resume_text.startswith("Word 文件读取失败")
-        or uploaded_resume_text.startswith("PDF 未读取到")
-        or uploaded_resume_text.startswith("Word 文件未读取到")
-        or uploaded_resume_text.startswith("暂不支持")
-    ):
-        st.error(uploaded_resume_text)
-        uploaded_resume_text = ""
-    else:
-        st.success("文件读取成功，系统将优先使用上传文件内容作为个人经历。")
+        if (
+            uploaded_resume_text.startswith("文件解码失败")
+            or uploaded_resume_text.startswith("PDF 文件读取失败")
+            or uploaded_resume_text.startswith("Word 文件读取失败")
+            or uploaded_resume_text.startswith("PDF 未读取到")
+            or uploaded_resume_text.startswith("Word 文件未读取到")
+            or uploaded_resume_text.startswith("暂不支持")
+        ):
+            st.error(uploaded_resume_text)
+            uploaded_resume_text = ""
+        else:
+            st.success("文件读取成功，系统将优先使用上传文件内容作为个人经历。")
 
-        with st.expander("查看上传文件内容预览"):
-            st.write(uploaded_resume_text[:1500])
+            with st.expander("查看上传文件内容预览"):
+                st.write(uploaded_resume_text[:1500])
 
-resume_text_input = st.text_area(
-    "请输入个人简历或项目经历",
-    height=240,
-    placeholder="如果没有上传文件，可以在这里粘贴你的专业技能、项目经历和自我评价内容。",
-)
+    resume_text_input = st.text_area(
+        "请输入个人简历或项目经历",
+        height=220,
+        placeholder="如果没有上传文件，可以在这里粘贴你的专业技能、项目经历和自我评价内容。",
+        key="resume_text_input",
+    )
 
-# 优先使用上传文件内容；如果没有上传文件，则使用手动输入内容
-final_resume_text = uploaded_resume_text.strip() if uploaded_resume_text.strip() else resume_text_input.strip()
-source_name = uploaded_source_name if uploaded_resume_text.strip() else "手动输入内容"
+    final_resume_text = uploaded_resume_text.strip() if uploaded_resume_text.strip() else resume_text_input.strip()
+    source_name = uploaded_source_name if uploaded_resume_text.strip() else "手动输入内容"
 
-if st.button("开始分析"):
-    if not job_description.strip() or not final_resume_text:
-        st.warning("请先输入岗位描述，并上传或填写个人经历。")
-    else:
-        with st.spinner("正在分析中，请稍等..."):
-            if rag_enabled:
-                result = run_rag_workflow(
-                    job_description,
-                    final_resume_text,
-                    source_name=source_name,
-                )
-            else:
-                result = run_agent_workflow(job_description, final_resume_text)
+    st.subheader("Step 3：选择分析模式并生成报告")
+    rag_enabled = st.checkbox(
+        "启用 RAG 检索增强分析",
+        value=False,
+        help="RAG 模式会先从简历中检索相关片段，再生成分析结果。",
+    )
 
+    if st.button("开始分析"):
+        if not job_description.strip() or not final_resume_text:
+            st.warning("请先输入岗位描述，并上传或填写个人经历。")
+        else:
+            with st.spinner("正在分析中，请稍等..."):
+                if rag_enabled:
+                    result = run_rag_workflow(
+                        job_description,
+                        final_resume_text,
+                        source_name=source_name,
+                    )
+                else:
+                    result = run_agent_workflow(job_description, final_resume_text)
+
+            # 保存本次分析结果，避免点击下载按钮或切换 RAG 片段预览时页面 rerun 后结果消失。
+            st.session_state["last_analysis_result"] = result
+            st.session_state["last_analysis_rag_enabled"] = rag_enabled
+
+    result = st.session_state.get("last_analysis_result")
+    result_rag_enabled = st.session_state.get("last_analysis_rag_enabled", False)
+
+    if result:
         if result.get("error"):
             st.error(result["error"])
         else:
             st.success("分析完成")
-            if rag_enabled and result.get("retrieved_chunk_count") is not None:
+            if result_rag_enabled and result.get("retrieved_chunk_count") is not None:
                 st.info(f"本次 RAG 检索召回了 {result['retrieved_chunk_count']} 个简历片段。")
 
             rag_sources = result.get("rag_sources", [])
-            if rag_enabled and rag_sources:
+            if result_rag_enabled and rag_sources:
                 with st.expander("查看 RAG 检索片段"):
                     show_full_rag_chunks = st.checkbox(
                         "显示完整 RAG 片段内容",
@@ -241,6 +315,14 @@ if st.button("开始分析"):
                             key=f"rag_source_{index}",
                         )
 
+            report_markdown = build_export_report(result, rag_enabled=result_rag_enabled)
+            st.download_button(
+                "下载分析报告 Markdown",
+                data=report_markdown,
+                file_name="resume_match_report.md",
+                mime="text/markdown",
+            )
+
         tab1, tab2, tab3, tab4 = st.tabs(
             ["岗位要求分析", "个人能力分析", "匹配度分析", "简历优化建议"]
         )
@@ -256,3 +338,131 @@ if st.button("开始分析"):
 
         with tab4:
             st.markdown(result["suggestions"])
+
+
+def render_demo_page() -> None:
+    st.title("示例演示")
+    st.write("这里提供一组脱敏示例数据，方便快速演示完整项目流程。")
+
+    if st.button("加载示例数据并进入分析"):
+        load_demo_data()
+        st.session_state["target_page"] = "简历岗位匹配分析"
+        st.rerun()
+
+    st.subheader("示例岗位 JD")
+    st.text_area(
+        "sample_job_description.txt",
+        value=load_sample_text(SAMPLE_JOB_PATH),
+        height=260,
+        disabled=True,
+    )
+
+    st.subheader("示例简历")
+    st.text_area(
+        "sample_resume.txt",
+        value=load_sample_text(SAMPLE_RESUME_PATH),
+        height=320,
+        disabled=True,
+    )
+
+
+def render_rag_detail_page() -> None:
+    st.title("RAG 召回片段说明")
+    st.write("本页用于解释项目中的 RAG 检索增强流程，帮助面试讲解和调试。")
+
+    st.subheader("RAG 流程")
+    steps = [
+        "解析简历文本",
+        "文本清洗和切分 chunk",
+        "生成 embedding",
+        "存入 ChromaDB",
+        "将岗位 JD 转成 query",
+        "检索 top_k 相关简历片段",
+        "将召回片段拼入 Prompt",
+        "调用大模型生成分析结果",
+    ]
+    for index, step in enumerate(steps, start=1):
+        st.markdown(f"{index}. {step}")
+
+    st.subheader("关键概念")
+    st.markdown("- chunk：简历文本切分后的片段，是 RAG 检索的基本单位。")
+    st.markdown("- overlap：相邻 chunk 的重叠部分，用来减少上下文被截断的问题。")
+    st.markdown("- top_k：从向量数据库中召回最相关的前 k 个片段。")
+    st.markdown("- metadata：记录来源文件名、chunk_index、embedding_provider 等信息，便于解释和调试。")
+
+    st.info("分析完成后，可以在结果区展开“查看 RAG 检索片段”，查看模型参考了哪些简历内容。")
+
+
+def render_about_page() -> None:
+    st.title("关于项目 / 后续计划")
+
+    st.subheader("当前项目已完成")
+    st.markdown("- 文件解析：txt / pdf / docx")
+    st.markdown("- Prompt 分析：普通分析和 RAG Prompt")
+    st.markdown("- RAG 检索：chunk、embedding、top_k 召回")
+    st.markdown("- ChromaDB 本地向量库")
+    st.markdown("- local embedding fallback")
+    st.markdown("- 示例模式")
+    st.markdown("- Markdown 报告导出")
+    st.markdown("- 基础测试脚本 simple_test.py")
+
+    st.subheader("当前不足")
+    st.markdown("- 当前更像 RAG Workflow，不是完整多工具 Agent。")
+    st.markdown("- Gemini API 可能受地区和额度影响。")
+    st.markdown("- local hash embedding 语义能力有限。")
+    st.markdown("- 还没有 rerank。")
+    st.markdown("- 还没有系统化检索质量评估。")
+    st.markdown("- 还没有 FastAPI 服务化。")
+    st.markdown("- 还没有完整 Trace / 日志面板。")
+
+    st.subheader("后续计划")
+    st.markdown("- metadata 过滤")
+    st.markdown("- rerank")
+    st.markdown("- FastAPI 服务化")
+    st.markdown("- Tool Calling")
+    st.markdown("- Trace 执行轨迹")
+    st.markdown("- DeepSeek / OpenAI-compatible 模型切换")
+    st.markdown("- 更完整测试")
+
+
+st.set_page_config(
+    page_title="AI Resume Agent",
+    page_icon="🤖",
+    layout="wide",
+)
+
+with st.sidebar:
+    st.header("功能入口")
+    page_options = [
+        "首页 / 项目介绍",
+        "简历岗位匹配分析",
+        "示例演示",
+        "RAG 召回片段说明",
+        "关于项目 / 后续计划",
+    ]
+    target_page = st.session_state.pop("target_page", None)
+    if target_page in page_options:
+        st.session_state["selected_page"] = target_page
+    if "selected_page" not in st.session_state:
+        st.session_state["selected_page"] = page_options[0]
+
+    page = st.radio(
+        "请选择页面",
+        page_options,
+        key="selected_page",
+    )
+
+    st.divider()
+    st.caption("AI 应用工程化 MVP / RAG Workflow 原型")
+    st.caption(f"Embedding Provider：{get_embedding_provider()}")
+
+if page == "首页 / 项目介绍":
+    render_home_page()
+elif page == "简历岗位匹配分析":
+    render_analysis_page()
+elif page == "示例演示":
+    render_demo_page()
+elif page == "RAG 召回片段说明":
+    render_rag_detail_page()
+else:
+    render_about_page()
