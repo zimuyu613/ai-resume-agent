@@ -25,6 +25,16 @@ DEFAULT_TOP_K = 3
 
 _local_bge_model = None
 
+SECTION_PATTERNS = [
+    ("basic_info", ["姓名", "求职意向", "个人信息", "基本信息", "联系方式", "邮箱", "手机", "意向岗位"]),
+    ("education", ["教育背景", "教育经历", "education"]),
+    ("skills", ["专业技能", "技能栈", "技术栈", "skills"]),
+    ("project_experience", ["项目经历", "项目经验", "projects"]),
+    ("internship_experience", ["实习经历", "工作经历", "internship", "work experience"]),
+    ("awards", ["竞赛经历", "获奖经历", "荣誉奖项", "awards"]),
+    ("self_evaluation", ["自我评价", "个人总结", "summary"]),
+]
+
 
 def get_embedding_provider() -> str:
     """读取当前 RAG 向量模式；默认 local，避免免费 Gemini Embedding 继续触发 429。"""
@@ -32,60 +42,146 @@ def get_embedding_provider() -> str:
     return provider if provider in {"local", "local_bge", "gemini"} else "local"
 
 
+def detect_resume_sections(text: str) -> list[dict]:
+    """
+    按行扫描简历标题，生成 section 范围。
+    这是规则识别，不做复杂 NLP；未命中的内容归为 unknown。
+    """
+    cleaned_text = re.sub(r"\s+", " ", text or "").strip()
+    if not cleaned_text:
+        return []
+
+    ranges = []
+    current_section = "basic_info"
+    current_start = 0
+    cursor = 0
+
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        normalized_line = line.lower().strip(" ：:-|")
+        line_start = cursor
+        compact_line = re.sub(r"\s+", " ", line).strip()
+        compact_length = len(compact_line)
+
+        detected_section = None
+        for section, keywords in SECTION_PATTERNS:
+            if any(keyword.lower() in normalized_line for keyword in keywords):
+                detected_section = section
+                break
+
+        if detected_section and line_start > current_start:
+            ranges.append(
+                {
+                    "section": current_section,
+                    "char_start": current_start,
+                    "char_end": line_start,
+                }
+            )
+            current_section = detected_section
+            current_start = line_start
+        elif detected_section:
+            current_section = detected_section
+
+        cursor += compact_length + 1
+
+    ranges.append(
+        {
+            "section": current_section,
+            "char_start": current_start,
+            "char_end": len(cleaned_text),
+        }
+    )
+
+    return ranges
+
+
+def get_section_for_chunk(section_ranges: list[dict], char_start: int, char_end: int) -> str:
+    """根据 chunk 与各 section range 的重叠长度，选择最主要的 section。"""
+    best_section = "unknown"
+    best_overlap = 0
+
+    for section_range in section_ranges:
+        overlap_start = max(char_start, section_range["char_start"])
+        overlap_end = min(char_end, section_range["char_end"])
+        overlap = max(0, overlap_end - overlap_start)
+
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_section = section_range["section"]
+
+    return best_section if best_overlap > 0 else "unknown"
+
+
 def build_chunk_records(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[dict]:
     """
-    将中英文简历文本切成带 metadata 的 chunk 记录。
+    先按简历 section 分块，再在每个 section 内部切 chunk。
+    这样可以减少单个 chunk 跨越多个模块导致 section 标注不准确的问题。
     char_start/char_end 基于清洗后的文本位置，用于解释 chunk 来源范围。
     """
     cleaned_text = re.sub(r"\s+", " ", text or "").strip()
     if not cleaned_text:
         return []
 
+    section_ranges = detect_resume_sections(text)
+
     if chunk_size <= 0:
         raise ValueError("chunk_size 必须大于 0")
 
     overlap = max(0, min(overlap, chunk_size - 1))
     records: list[dict] = []
-    start = 0
 
-    while start < len(cleaned_text):
-        end = min(start + chunk_size, len(cleaned_text))
-        chunk = cleaned_text[start:end]
+    for section_range in section_ranges:
+        section = section_range["section"]
+        block_start = max(0, section_range["char_start"])
+        block_end = min(len(cleaned_text), section_range["char_end"])
+        raw_block = cleaned_text[block_start:block_end]
 
-        # 尽量在中英文标点或空格处收尾，让召回片段更自然。
-        if end < len(cleaned_text):
-            split_at = max(
-                chunk.rfind("。"),
-                chunk.rfind("！"),
-                chunk.rfind("？"),
-                chunk.rfind("."),
-                chunk.rfind("!"),
-                chunk.rfind("?"),
-                chunk.rfind(";"),
-                chunk.rfind("；"),
-                chunk.rfind(" "),
-            )
-            if split_at > chunk_size * 0.5:
-                end = start + split_at + 1
-                chunk = cleaned_text[start:end]
+        leading_spaces = len(raw_block) - len(raw_block.lstrip())
+        block_text = raw_block.strip()
+        if not block_text:
+            continue
 
-        chunk = chunk.strip()
-        if chunk:
-            records.append(
-                {
-                    "text": chunk,
-                    "chunk_id": len(records),
-                    "char_start": start,
-                    "char_end": end,
-                    "chunk_length": len(chunk),
-                    "section": "unknown",
-                }
-            )
+        local_start = 0
+        while local_start < len(block_text):
+            local_end = min(local_start + chunk_size, len(block_text))
+            chunk = block_text[local_start:local_end]
 
-        if end >= len(cleaned_text):
-            break
+            # 尽量在中英文标点或空格处收尾，让召回片段更自然。
+            if local_end < len(block_text):
+                split_at = max(
+                    chunk.rfind("。"),
+                    chunk.rfind("！"),
+                    chunk.rfind("？"),
+                    chunk.rfind("."),
+                    chunk.rfind("!"),
+                    chunk.rfind("?"),
+                    chunk.rfind(";"),
+                    chunk.rfind("；"),
+                    chunk.rfind(" "),
+                )
+                if split_at > chunk_size * 0.5:
+                    local_end = local_start + split_at + 1
+                    chunk = block_text[local_start:local_end]
 
-        start = max(end - overlap, start + 1)
+            chunk = chunk.strip()
+            if chunk:
+                char_start = block_start + leading_spaces + local_start
+                char_end = block_start + leading_spaces + local_end
+                records.append(
+                    {
+                        "text": chunk,
+                        "chunk_id": len(records),
+                        "char_start": char_start,
+                        "char_end": char_end,
+                        "chunk_length": len(chunk),
+                        "section": section,
+                    }
+                )
+
+            if local_end >= len(block_text):
+                break
+
+            local_start = max(local_end - overlap, local_start + 1)
 
     return records
 
@@ -350,6 +446,7 @@ def retrieve_relevant_chunks_with_sources(
     resume_text: str,
     source_name: str = "简历文本",
     top_k: int = DEFAULT_TOP_K,
+    section_filter: str | None = None,
 ) -> dict:
     """
     根据岗位描述，从当前简历 collection 中召回最相关的片段。
@@ -390,10 +487,27 @@ def retrieve_relevant_chunks_with_sources(
             )
             query_embedding = get_local_embedding(job_description)
 
-    result_count = min(max(top_k, 1), collection.count())
+    if section_filter:
+        available = collection.get(where={"section": section_filter}, include=["metadatas"])
+        available_count = len(available.get("ids", []))
+    else:
+        available_count = collection.count()
+
+    if available_count == 0:
+        return {
+            "context": "",
+            "sources": [],
+            "embedding_provider": provider_used,
+            "total_chunks": collection.count(),
+            "section_filter": section_filter,
+            "available_filtered_chunks": 0,
+        }
+
+    result_count = min(max(top_k, 1), available_count)
     results = collection.query(
         query_embeddings=[query_embedding],
         n_results=result_count,
+        where={"section": section_filter} if section_filter else None,
         include=["documents", "metadatas", "distances"],
     )
 
@@ -440,6 +554,8 @@ def retrieve_relevant_chunks_with_sources(
         "sources": sources,
         "embedding_provider": provider_used,
         "total_chunks": collection.count(),
+        "section_filter": section_filter,
+        "available_filtered_chunks": available_count,
     }
 
 

@@ -149,13 +149,29 @@ RAG 模式会执行以下步骤：
 
 当前默认 top_k 为 3，并限制最大处理 chunk 数，避免免费 API 或长文本导致不稳定。
 
+当前项目采用 section-aware chunking：先识别简历模块，例如 `basic_info`、`skills`、`project_experience`，再在每个模块内部切分 chunk。这样可以减少 chunk 跨模块导致的 section 标注不准确问题。section 识别仍然是基于规则的方法，不是复杂 NLP。
+
 ### RAG 参数与可解释性
 
 - chunk：简历文本切分后的片段，是写入向量数据库和检索召回的基本单位。
 - overlap：相邻 chunk 的重叠区域，用于减少关键信息刚好被切断的问题。
 - top_k：从 ChromaDB 中召回最相关的前 k 个片段。页面中可以在 RAG 模式下调整，默认值为 3。
 - metadata：每个 chunk 会保存来源和位置等信息，例如 `source`、`chunk_id`、`file_name`、`char_start`、`char_end`、`chunk_length`。这些信息用于解释模型参考了哪些简历内容。
+- section metadata：项目会用简单规则识别简历模块，例如教育背景、技能栈、项目经历、实习经历、获奖竞赛和自我评价。RAG 模式可以按 section 缩小检索范围。
 - distance：ChromaDB 返回的检索距离，数值越小通常表示越相关。不同 embedding 模式下 distance 的绝对值不一定可直接横向比较，更适合作为同一次检索中的参考。
+
+当前支持的 section 类型：
+
+- `education`：教育背景 / 教育经历 / Education
+- `basic_info`：姓名 / 求职意向 / 个人信息 / 基本信息 / 联系方式 / 邮箱 / 手机 / 意向岗位
+- `skills`：专业技能 / 技能栈 / 技术栈 / Skills
+- `project_experience`：项目经历 / 项目经验 / Projects
+- `internship_experience`：实习经历 / 工作经历 / Internship / Work Experience
+- `awards`：竞赛经历 / 获奖经历 / 荣誉奖项 / Awards
+- `self_evaluation`：自我评价 / 个人总结 / Summary
+- `unknown`：无法识别的内容
+
+section 识别是规则方法，不是复杂 NLP。如果某个 section 没有召回结果，可以切回“全部”检索。
 
 当前 RAG 仍有一些不足：
 

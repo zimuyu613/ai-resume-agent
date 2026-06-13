@@ -181,7 +181,7 @@ def run_agent_workflow(job_description: str, resume_text: str) -> dict:
     }
 
 
-def _build_error_result(message: str) -> dict:
+def _build_error_result(message: str, top_k: int | None = None, section_filter: str | None = None) -> dict:
     """把错误信息包装成页面可展示的四个 Tab，避免 Streamlit 页面崩溃。"""
     error_text = f"RAG 检索增强分析暂时无法完成，可能是 Gemini API 免费额度或请求频率限制。请稍后重试，或关闭 RAG 模式使用普通分析。\n\n错误详情：{message}"
     return {
@@ -193,10 +193,18 @@ def _build_error_result(message: str) -> dict:
         "error": error_text,
         "rag_sources": [],
         "retrieved_chunk_count": 0,
+        "rag_top_k": top_k,
+        "rag_section_filter": section_filter,
     }
 
 
-def run_rag_workflow(job_description: str, resume_text: str, source_name: str = "简历文本", top_k: int = 3) -> dict:
+def run_rag_workflow(
+    job_description: str,
+    resume_text: str,
+    source_name: str = "简历文本",
+    top_k: int = 3,
+    section_filter: str | None = None,
+) -> dict:
     """
     RAG 增强版分析流程：
     1. 根据岗位描述召回最相关的简历片段
@@ -210,15 +218,27 @@ def run_rag_workflow(job_description: str, resume_text: str, source_name: str = 
             resume_text=resume_text,
             source_name=source_name,
             top_k=top_k,
+            section_filter=section_filter,
         )
     except Exception as e:
-        return _build_error_result(str(e))
+        return _build_error_result(str(e), top_k=top_k, section_filter=section_filter)
 
     retrieved_context = retrieval_result.get("context", "")
     sources = retrieval_result.get("sources", [])
 
     if not retrieved_context.strip():
-        return _build_error_result("没有召回到与岗位描述相关的简历片段，请检查简历文本是否足够完整。")
+        if section_filter:
+            return _build_error_result(
+                "当前检索范围没有召回到简历片段，请切换为“全部”或选择其他简历模块后重试。",
+                top_k=top_k,
+                section_filter=section_filter,
+            )
+
+        return _build_error_result(
+            "没有召回到与岗位描述相关的简历片段，请检查简历文本是否足够完整。",
+            top_k=top_k,
+            section_filter=section_filter,
+        )
 
     prompt = RAG_ANALYSIS_PROMPT.format(
         job_description=job_description[:4000],
@@ -263,4 +283,6 @@ def run_rag_workflow(job_description: str, resume_text: str, source_name: str = 
         "embedding_provider": retrieval_result.get("embedding_provider"),
         "rag_top_k": top_k,
         "rag_total_chunks": retrieval_result.get("total_chunks"),
+        "rag_section_filter": retrieval_result.get("section_filter"),
+        "rag_available_filtered_chunks": retrieval_result.get("available_filtered_chunks"),
     }

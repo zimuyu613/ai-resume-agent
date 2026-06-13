@@ -14,6 +14,20 @@ SAMPLES_DIR = BASE_DIR / "samples"
 SAMPLE_RESUME_PATH = SAMPLES_DIR / "sample_resume.txt"
 SAMPLE_JOB_PATH = SAMPLES_DIR / "sample_job_description.txt"
 
+SECTION_OPTIONS = {
+    "全部": None,
+    "基本信息": "basic_info",
+    "项目经历": "project_experience",
+    "技能栈": "skills",
+    "实习经历": "internship_experience",
+    "教育背景": "education",
+    "获奖竞赛": "awards",
+    "自我评价": "self_evaluation",
+}
+
+SECTION_LABELS = {value: label for label, value in SECTION_OPTIONS.items()}
+SECTION_LABELS[None] = "全部"
+
 
 def load_sample_text(path: Path) -> str:
     """读取示例文件；如果文件缺失，返回友好提示文本。"""
@@ -48,6 +62,8 @@ def build_export_report(result: dict, rag_enabled: bool) -> str:
         top_k = result.get("rag_top_k", len(result.get("rag_sources", [])))
         actual_count = len(result.get("rag_sources", []))
         total_chunks = result.get("rag_total_chunks", actual_count)
+        section_filter = result.get("rag_section_filter")
+        section_label = SECTION_LABELS.get(section_filter, section_filter or "全部")
         sections.extend(
             [
                 "",
@@ -57,6 +73,7 @@ def build_export_report(result: dict, rag_enabled: bool) -> str:
                 f"- 本次简历生成 chunk 数量：{total_chunks}",
                 f"- 用户设置 top_k：{top_k}",
                 f"- 实际召回片段数量：{actual_count}",
+                f"- 检索范围 section：{section_label}",
                 "以下片段作为大模型分析的参考上下文。",
                 "",
             ]
@@ -82,9 +99,10 @@ def build_export_report(result: dict, rag_enabled: bool) -> str:
                     f"- source：{source.get('source', 'resume')}",
                     f"- file_name：{source.get('file_name', source.get('source_name', '未知来源'))}",
                     f"- chunk_length：{source.get('chunk_length', len(source.get('text', '')))}",
+                    f"- section：{source.get('section', 'unknown')}",
                     f"- distance：{distance_text}",
                     "",
-                    f"内容摘要：{preview}",
+                    f"内容预览：{preview}",
                     "",
                 ]
             )
@@ -281,6 +299,10 @@ def render_analysis_page() -> None:
     if rag_enabled:
         rag_top_k = st.slider("RAG 召回片段数量 top_k", min_value=1, max_value=8, value=3)
         st.caption("top_k 表示从向量数据库中召回最相关的前 k 个简历片段。")
+        section_label = st.selectbox("RAG 检索范围", list(SECTION_OPTIONS.keys()), index=0)
+        section_filter = SECTION_OPTIONS[section_label]
+    else:
+        section_filter = None
 
     if st.button("开始分析"):
         if not job_description.strip() or not final_resume_text:
@@ -293,6 +315,7 @@ def render_analysis_page() -> None:
                         final_resume_text,
                         source_name=source_name,
                         top_k=rag_top_k,
+                        section_filter=section_filter,
                     )
                 else:
                     result = run_agent_workflow(job_description, final_resume_text)
@@ -321,7 +344,10 @@ def render_analysis_page() -> None:
                 )
 
                 if actual_count < top_k:
-                    st.warning("实际召回数量少于 top_k，通常是因为当前简历切分后的 chunk 总数不足。")
+                    if result.get("rag_available_filtered_chunks") == 0:
+                        st.warning("当前检索范围没有可召回的 chunk，请切换为“全部”或选择其他简历模块。")
+                    else:
+                        st.warning("实际召回数量少于 top_k，通常是因为当前简历切分后的 chunk 总数不足。")
 
             rag_sources = result.get("rag_sources", [])
             if result_rag_enabled and rag_sources:
@@ -338,6 +364,7 @@ def render_analysis_page() -> None:
                         st.write(f"file_name：{source.get('file_name', source.get('source_name', '未知来源'))}")
                         st.write(f"chunk_id：{source.get('chunk_id', source.get('chunk_index', index))}")
                         st.write(f"chunk_length：{source.get('chunk_length', len(source.get('text', '')))}")
+                        st.write(f"section：{source.get('section', 'unknown')}")
 
                         if source.get("distance") is not None:
                             st.write(f"检索距离 distance：{source['distance']:.4f}（数值越小通常表示越相关）")
