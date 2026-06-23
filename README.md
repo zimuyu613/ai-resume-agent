@@ -18,6 +18,7 @@ AI Resume Agent 是一个基于大语言模型、RAG Workflow 和轻量级 Agent
 - txt / pdf / docx 简历文件解析。
 - 岗位 JD 输入和普通 LLM 分析。
 - RAG 检索增强分析与 ChromaDB 本地向量检索。
+- 可选 rule-based lightweight rerank 二次排序。
 - section-aware chunking，保留简历模块 metadata。
 - 展示 RAG 召回片段、section、chunk_index、distance 和 chunk_length。
 - local / local_bge / gemini embedding provider 与 local fallback。
@@ -50,7 +51,10 @@ flowchart TD
     D --> E[写入 ChromaDB]
     F[输入岗位 JD] --> G[RAG 检索]
     E --> G
-    G --> H[Tool Calling 工具层]
+    G --> R{启用轻量 Rerank?}
+    R -->|是| RR[关键词 + section + distance 二次排序]
+    R -->|否| H[Tool Calling 工具层]
+    RR --> H
     H --> I[Agent Workflow]
     I --> J[LLM 匹配分析]
     J --> K[Trace 记录]
@@ -72,6 +76,18 @@ flowchart TD
 ### Agent Workflow 分析
 
 按固定流程调用 `rag_retrieve_tool` 和 `llm_match_analysis_tool`，返回最终分析、Workflow Steps 和 Trace。当前是可讲解的 Tool Calling MVP，不包含动态复杂规划。
+
+## Lightweight Rerank MVP
+
+项目在 ChromaDB 初步召回之后提供可选的 rule-based rerank。开启后，系统会扩大初始候选片段范围，再根据以下可解释信号做二次排序并返回 top_k：
+
+- JD 与 chunk 的关键词重合数量。
+- `skills`、`project_experience`、`internship_experience` 等 section bonus。
+- 原始 Chroma distance 转换得到的 distance score。
+
+页面会展示 `rerank_score`、`keyword_hits`、`section_bonus` 和原始 `distance`；Agent Trace 和 Eval 也会记录 `used_rerank`、`rerank_method` 和关键词命中摘要。
+
+当前实现不是 cross-encoder reranker，也不是大模型 rerank。它的目标是用低依赖、容易讲解的规则增强召回片段的关键词相关性和 section 覆盖度，同时保留完整的评分解释。
 
 ## 快速开始
 
@@ -170,6 +186,7 @@ resume-agent/
 ├─ app.py                  # Streamlit 页面、三种模式、结果与 Trace 展示
 ├─ agent.py                # Gemini 调用、普通 LLM 与 RAG 分析逻辑
 ├─ rag.py                  # section-aware chunking、embedding、ChromaDB 检索
+├─ rerank_utils.py         # 关键词、section、distance 规则二次排序
 ├─ prompts.py              # 系统 Prompt、普通分析 Prompt、RAG Prompt
 ├─ tools.py                # ToolResult 和四个 Agent 工具
 ├─ agent_workflow.py       # 固定 Tool Calling Workflow 与 Trace 接入
@@ -213,7 +230,7 @@ resume-agent/
 
 ## 后续优化方向
 
-- 增加轻量 rerank，提高 RAG 召回排序质量。
+- 在数据规模和质量要求提升后评估 cross-encoder reranker。
 - 使用 FastAPI 提供独立后端服务。
 - 支持更多 LLM 和 embedding provider。
 - 扩充 Eval 数据、检索指标和真实模型质量评测。

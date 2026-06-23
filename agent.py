@@ -9,6 +9,7 @@ from prompts import (
     RAG_ANALYSIS_PROMPT,
 )
 from rag import retrieve_relevant_chunks_with_sources
+from rerank_utils import rerank_chunks
 
 # 读取 .env 文件中的环境变量
 load_dotenv()
@@ -204,6 +205,7 @@ def run_rag_workflow(
     source_name: str = "简历文本",
     top_k: int = 3,
     section_filter: str | None = None,
+    use_rerank: bool = False,
 ) -> dict:
     """
     RAG 增强版分析流程：
@@ -213,18 +215,24 @@ def run_rag_workflow(
     4. 复用 extract_section 拆分为四个页面 Tab
     """
     try:
+        candidate_k = min(max(top_k * 2, top_k), 12) if use_rerank else top_k
         retrieval_result = retrieve_relevant_chunks_with_sources(
             job_description=job_description,
             resume_text=resume_text,
             source_name=source_name,
-            top_k=top_k,
+            top_k=candidate_k,
             section_filter=section_filter,
         )
     except Exception as e:
         return _build_error_result(str(e), top_k=top_k, section_filter=section_filter)
 
-    retrieved_context = retrieval_result.get("context", "")
     sources = retrieval_result.get("sources", [])
+    if use_rerank:
+        sources = rerank_chunks(sources, job_description=job_description, top_k=top_k)
+    retrieved_context = "\n\n".join(
+        f"[相关片段 {index} | section={source.get('section', 'unknown')}]\n{source.get('text', '')}"
+        for index, source in enumerate(sources, start=1)
+    )
 
     if not retrieved_context.strip():
         if section_filter:
@@ -285,4 +293,6 @@ def run_rag_workflow(
         "rag_total_chunks": retrieval_result.get("total_chunks"),
         "rag_section_filter": retrieval_result.get("section_filter"),
         "rag_available_filtered_chunks": retrieval_result.get("available_filtered_chunks"),
+        "used_rerank": use_rerank,
+        "rerank_method": "rule_based" if use_rerank else None,
     }

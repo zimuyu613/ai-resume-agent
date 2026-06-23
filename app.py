@@ -132,6 +132,8 @@ def render_agent_trace(result: dict) -> None:
             "job_description_length": trace.get("job_description_length"),
             "top_k": trace.get("top_k"),
             "used_rag": trace.get("used_rag"),
+            "used_rerank": trace.get("used_rerank"),
+            "rerank_method": trace.get("rerank_method"),
             "embedding_provider": trace.get("embedding_provider"),
             "used_fallback": trace.get("used_fallback"),
         }
@@ -361,10 +363,16 @@ def render_analysis_page() -> None:
     if rag_enabled:
         rag_top_k = st.slider("RAG 召回片段数量 top_k", min_value=1, max_value=8, value=3)
         st.caption("top_k 表示从向量数据库中召回最相关的前 k 个简历片段。")
+        use_rerank = st.checkbox(
+            "启用轻量 Rerank",
+            value=False,
+            help="在 ChromaDB 初步召回后，根据 JD 关键词、section 和 distance 二次排序。",
+        )
         section_label = st.selectbox("RAG 检索范围", list(SECTION_OPTIONS.keys()), index=0)
         section_filter = SECTION_OPTIONS[section_label]
     else:
         section_filter = None
+        use_rerank = False
 
     if st.button("开始分析"):
         if not job_description.strip() or not final_resume_text:
@@ -379,6 +387,7 @@ def render_analysis_page() -> None:
                         use_rag=True,
                         source_name=source_name,
                         section_filter=section_filter,
+                        use_rerank=use_rerank,
                     )
                 elif rag_enabled:
                     result = run_rag_workflow(
@@ -387,6 +396,7 @@ def render_analysis_page() -> None:
                         source_name=source_name,
                         top_k=rag_top_k,
                         section_filter=section_filter,
+                        use_rerank=use_rerank,
                     )
                 else:
                     result = run_agent_workflow(job_description, final_resume_text)
@@ -457,6 +467,11 @@ def render_analysis_page() -> None:
                             st.write(f"检索距离 distance：{source['distance']:.4f}（数值越小通常表示越相关）")
                         else:
                             st.write("distance：未返回")
+
+                        if source.get("rerank_score") is not None:
+                            st.write(f"rerank_score：{source['rerank_score']:.4f}")
+                            st.write(f"keyword_hits：{source.get('keyword_hits', [])}")
+                            st.write(f"section_bonus：{source.get('section_bonus', 0):.4f}")
 
                         chunk_text = source.get("text", "")
                         preview_text = chunk_text

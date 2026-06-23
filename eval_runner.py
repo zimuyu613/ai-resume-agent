@@ -106,11 +106,46 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
     elif not expected_keywords_hit:
         errors.append("RAG retrieval did not hit any expected keyword.")
 
+    rerank_result = rag_retrieve_tool(
+        resume_text=resume_text,
+        job_description=job_description,
+        top_k=top_k,
+        source_name=f"{case['case_name']}/resume.txt",
+        use_rerank=True,
+    )
+    reranked_chunks = rerank_result.data.get("chunks", []) if rerank_result.success else []
+    rerank_keyword_hits = sorted(
+        {
+            keyword
+            for chunk in reranked_chunks
+            for keyword in chunk.get("keyword_hits", [])
+        }
+    )
+    reranked_text = "\n".join(chunk.get("text", "") for chunk in reranked_chunks)
+    rerank_expected_keywords_hit = _contains_hits(
+        reranked_text,
+        expected.get("expected_keywords", []),
+    )
+    rerank_passed = bool(
+        rerank_result.success
+        and reranked_chunks
+        and rerank_result.data.get("used_rerank") is True
+        and all("rerank_score" in chunk for chunk in reranked_chunks)
+        and rerank_expected_keywords_hit
+    )
+    if not rerank_passed:
+        errors.append(f"Rerank check failed: {rerank_result.error or 'missing scores or keyword hits'}")
+    top_rerank_score = max(
+        (float(chunk["rerank_score"]) for chunk in reranked_chunks if "rerank_score" in chunk),
+        default=None,
+    )
+
     agent_result = run_resume_agent_workflow(
         resume_text=resume_text,
         job_description=job_description,
         top_k=top_k,
         use_rag=True,
+        use_rerank=True,
         source_name=f"{case['case_name']}/resume.txt",
         llm_callable=mock_llm_for_eval,
     )
@@ -120,7 +155,10 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
         and analysis
         and agent_result.get("workflow_steps")
     )
-    trace_passed = _trace_is_valid(agent_result)
+    trace_passed = bool(
+        _trace_is_valid(agent_result)
+        and agent_result.get("trace", {}).get("used_rerank") is True
+    )
     if not agent_workflow_passed:
         errors.append(f"Agent workflow error: {agent_result.get('error') or 'missing output'}")
     if not trace_passed:
@@ -158,6 +196,7 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
 
     overall_passed = bool(
         rag_retrieve_passed
+        and rerank_passed
         and agent_workflow_passed
         and trace_passed
         and non_rag_workflow_passed
@@ -167,6 +206,10 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
         "case_name": case["case_name"],
         "llm_mode": "mock",
         "rag_retrieve_passed": rag_retrieve_passed,
+        "rerank_passed": rerank_passed,
+        "rerank_keyword_hits": rerank_keyword_hits,
+        "rerank_score": top_rerank_score,
+        "used_rerank": rerank_result.data.get("used_rerank", False),
         "agent_workflow_passed": agent_workflow_passed,
         "non_rag_workflow_passed": non_rag_workflow_passed,
         "trace_passed": trace_passed,
@@ -233,6 +276,7 @@ def main() -> int:
     for case_result in results["cases"]:
         print(f"\n[{case_result['case_name']}]")
         print(f"* RAG retrieve: {_status(case_result['rag_retrieve_passed'])}")
+        print(f"* Lightweight rerank: {_status(case_result['rerank_passed'])}")
         print(f"* Agent workflow: {_status(case_result['agent_workflow_passed'])}")
         print(f"* Non-RAG workflow: {_status(case_result['non_rag_workflow_passed'])}")
         print(f"* Trace generated: {_status(case_result['trace_passed'])}")

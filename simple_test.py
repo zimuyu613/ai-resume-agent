@@ -7,6 +7,7 @@ os.environ["EMBEDDING_PROVIDER"] = "local"
 from agent_workflow import run_resume_agent_workflow
 from eval_runner import discover_eval_cases, load_eval_case, run_evaluations
 from rag import build_chunk_records, detect_resume_sections, get_local_embedding, split_text
+from rerank_utils import extract_keywords, rerank_chunks
 from tools import ToolResult, rag_retrieve_tool
 from trace_utils import TraceStep, WorkflowTrace, create_run_id, now_iso, trace_to_dict
 
@@ -301,6 +302,64 @@ def test_demo_polish_files_and_readme_sections() -> None:
         assert_true(section_name in readme_text, f"README.md 应该包含 {section_name} 小节")
 
 
+def test_extract_keywords_and_rerank_chunks() -> None:
+    keywords = extract_keywords("需要 Python、RAG、Agent 和 FastAPI 项目经验")
+    assert_true("Python" in keywords, "extract_keywords 应该识别 Python")
+    assert_true("RAG" in keywords, "extract_keywords 应该识别 RAG")
+    assert_true("Agent" in keywords, "extract_keywords 应该识别 Agent")
+
+    chunks = [
+        {"text": "负责日常文档整理", "section": "basic_info", "distance": 0.1},
+        {"text": "使用 Python 和 RAG 构建 Agent 项目", "section": "project_experience", "distance": 0.4},
+    ]
+    reranked = rerank_chunks(chunks, "Python RAG Agent 开发", top_k=2)
+    assert_true(reranked[0]["section"] == "project_experience", "rerank 应优先关键词匹配片段")
+    assert_true("rerank_score" in reranked[0], "rerank 结果应该包含 rerank_score")
+    assert_true(bool(reranked[0]["keyword_hits"]), "rerank 结果应该包含 keyword_hits")
+
+
+def test_rag_tool_and_agent_workflow_with_rerank() -> None:
+    resume_text = """专业技能
+Python、RAG、ChromaDB、Agent
+项目经历
+使用 Python 实现 RAG 简历分析工具，并展示召回片段。"""
+    job_description = "招聘 Python RAG Agent 开发实习生"
+    retrieval = rag_retrieve_tool(
+        resume_text=resume_text,
+        job_description=job_description,
+        top_k=2,
+        use_rerank=True,
+    )
+    assert_true(retrieval.success, f"rerank RAG 工具不应该失败：{retrieval.error}")
+    assert_true(retrieval.data["used_rerank"] is True, "工具结果应该记录 used_rerank")
+    assert_true(
+        all("rerank_score" in chunk for chunk in retrieval.data["chunks"]),
+        "rerank chunks 应该包含 rerank_score",
+    )
+
+    def mock_llm(_prompt: str) -> str:
+        return "## 岗位要求分析\nPython RAG Agent\n## 个人能力分析\n匹配"
+
+    workflow = run_resume_agent_workflow(
+        resume_text=resume_text,
+        job_description=job_description,
+        top_k=2,
+        use_rag=True,
+        use_rerank=True,
+        llm_callable=mock_llm,
+    )
+    assert_true(workflow["success"], "启用 rerank 的 Agent Workflow 应该成功")
+    assert_true(workflow["trace"]["used_rerank"] is True, "Trace 应该记录 used_rerank")
+    assert_true(
+        workflow["trace"]["rerank_method"] == "rule_based",
+        "Trace 应该记录 rule_based rerank 方法",
+    )
+    assert_true(
+        workflow["trace"]["steps"][0]["output_summary"]["rerank_score"] is not None,
+        "Trace 步骤应该记录 rerank_score",
+    )
+
+
 if __name__ == "__main__":
     test_split_text()
     test_chunk_metadata()
@@ -318,4 +377,6 @@ if __name__ == "__main__":
     test_agent_workflow_trace_without_rag()
     test_eval_cases_and_runner_imports()
     test_demo_polish_files_and_readme_sections()
+    test_extract_keywords_and_rerank_chunks()
+    test_rag_tool_and_agent_workflow_with_rerank()
     print("simple_test.py: all tests passed")

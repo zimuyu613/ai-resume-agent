@@ -37,6 +37,8 @@ class WorkflowTrace:
     embedding_provider: str | None
     used_rag: bool
     used_fallback: bool | None
+    used_rerank: bool = False
+    rerank_method: str | None = None
     steps: list[TraceStep] = field(default_factory=list)
     final_status: str = "running"
     error: str | None = None

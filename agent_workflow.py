@@ -37,6 +37,31 @@ def _error_analysis(message: str) -> dict[str, str]:
     }
 
 
+def _rerank_summary(result: ToolResult) -> dict[str, Any]:
+    chunks = result.data.get("chunks", [])
+    rerank_scores = [
+        float(chunk["rerank_score"])
+        for chunk in chunks
+        if chunk.get("rerank_score") is not None
+    ]
+    keyword_hits = sorted(
+        {
+            keyword
+            for chunk in chunks
+            for keyword in chunk.get("keyword_hits", [])
+        }
+    )
+    return {
+        **summarize_chunks(chunks),
+        "embedding_provider": result.data.get("embedding_provider"),
+        "used_rerank": result.data.get("used_rerank", False),
+        "rerank_method": result.data.get("rerank_method"),
+        "reranked_chunk_count": len(chunks),
+        "rerank_keyword_hits": keyword_hits,
+        "rerank_score": max(rerank_scores) if rerank_scores else None,
+    }
+
+
 def _timed_tool_step(
     step_name: str,
     input_summary: dict[str, Any],
@@ -118,6 +143,8 @@ def _base_result(
         "rag_total_chunks": retrieval_data.get("rag_total_chunks"),
         "rag_section_filter": retrieval_data.get("rag_section_filter", section_filter),
         "rag_available_filtered_chunks": retrieval_data.get("rag_available_filtered_chunks"),
+        "used_rerank": retrieval_data.get("used_rerank", False),
+        "rerank_method": retrieval_data.get("rerank_method"),
     }
 
 
@@ -128,6 +155,7 @@ def run_resume_agent_workflow(
     use_rag: bool = True,
     source_name: str = "resume_text",
     section_filter: str | None = None,
+    use_rerank: bool = False,
     llm_callable: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     """Run the fixed tool chain and return analysis plus a lightweight trace."""
@@ -145,6 +173,8 @@ def run_resume_agent_workflow(
         embedding_provider=None,
         used_rag=use_rag,
         used_fallback=None,
+        used_rerank=bool(use_rag and use_rerank),
+        rerank_method="rule_based" if use_rag and use_rerank else None,
     )
     retrieved_chunks: list[dict[str, Any]] = []
     retrieval_data: dict[str, Any] = {}
@@ -157,6 +187,7 @@ def run_resume_agent_workflow(
                 "resume_length": len(resume_text or ""),
                 "top_k": top_k,
                 "section_filter": section_filter,
+                "use_rerank": use_rerank,
             },
             tool_call=lambda: rag_retrieve_tool(
                 resume_text=resume_text,
@@ -164,11 +195,9 @@ def run_resume_agent_workflow(
                 top_k=top_k,
                 source_name=source_name,
                 section_filter=section_filter,
+                use_rerank=use_rerank,
             ),
-            output_builder=lambda result: {
-                **summarize_chunks(result.data.get("chunks", [])),
-                "embedding_provider": result.data.get("embedding_provider"),
-            },
+            output_builder=_rerank_summary,
         )
         trace.steps.append(retrieve_step)
 
@@ -182,6 +211,8 @@ def run_resume_agent_workflow(
         retrieval_data = retrieve_result.data
         retrieved_chunks = retrieval_data.get("chunks", [])
         trace.embedding_provider = retrieval_data.get("embedding_provider")
+        trace.used_rerank = retrieval_data.get("used_rerank", False)
+        trace.rerank_method = retrieval_data.get("rerank_method")
         trace.used_fallback = bool(
             configured_provider
             and trace.embedding_provider
@@ -195,8 +226,12 @@ def run_resume_agent_workflow(
                 tool_name="rag_retrieve_tool",
                 success=True,
                 message="RAG retrieval skipped because use_rag=False.",
-                input_summary={"use_rag": False, "top_k": top_k},
-                output_summary={"skipped": True, "retrieved_chunk_count": 0},
+                input_summary={"use_rag": False, "top_k": top_k, "use_rerank": False},
+                output_summary={
+                    "skipped": True,
+                    "retrieved_chunk_count": 0,
+                    "used_rerank": False,
+                },
                 start_time=timestamp,
                 end_time=timestamp,
                 duration_ms=0.0,
@@ -210,6 +245,7 @@ def run_resume_agent_workflow(
             "job_description_preview": summarize_text(job_description),
             "retrieved_chunk_count": len(retrieved_chunks),
             "use_rag": use_rag,
+            "use_rerank": bool(use_rag and use_rerank),
         },
         tool_call=lambda: llm_match_analysis_tool(
             resume_text=resume_text,

@@ -9,6 +9,7 @@ from pypdf import PdfReader
 from agent import call_llm, extract_section, run_agent_workflow
 from prompts import COMPREHENSIVE_ANALYSIS_PROMPT, RAG_ANALYSIS_PROMPT
 from rag import retrieve_relevant_chunks_with_sources
+from rerank_utils import rerank_chunks
 
 
 @dataclass
@@ -126,31 +127,45 @@ def rag_retrieve_tool(
     top_k: int = 5,
     source_name: str = "resume_text",
     section_filter: str | None = None,
+    use_rerank: bool = False,
 ) -> ToolResult:
     """Retrieve resume chunks with section-aware metadata for RAG analysis."""
     tool_name = "rag_retrieve_tool"
 
     try:
+        candidate_k = min(max(top_k * 2, top_k), 12) if use_rerank else top_k
         retrieval_result = retrieve_relevant_chunks_with_sources(
             job_description=job_description,
             resume_text=resume_text,
             source_name=source_name,
-            top_k=top_k,
+            top_k=candidate_k,
             section_filter=section_filter,
         )
-        chunks = retrieval_result.get("sources", [])
+        initial_chunks = retrieval_result.get("sources", [])
+        chunks = (
+            rerank_chunks(initial_chunks, job_description=job_description, top_k=top_k)
+            if use_rerank
+            else initial_chunks
+        )
+        retrieved_context = "\n\n".join(
+            f"[相关片段 {index} | section={chunk.get('section', 'unknown')}]\n{chunk.get('text', '')}"
+            for index, chunk in enumerate(chunks, start=1)
+        )
         return _success(
             tool_name,
-            f"Retrieved {len(chunks)} chunk(s).",
+            f"Retrieved {len(chunks)} chunk(s){' with rule-based rerank' if use_rerank else ''}.",
             {
-                "retrieved_context": retrieval_result.get("context", ""),
+                "retrieved_context": retrieved_context,
                 "chunks": chunks,
                 "retrieved_chunk_count": len(chunks),
+                "initial_retrieved_chunk_count": len(initial_chunks),
                 "embedding_provider": retrieval_result.get("embedding_provider"),
                 "rag_top_k": top_k,
                 "rag_total_chunks": retrieval_result.get("total_chunks"),
                 "rag_section_filter": retrieval_result.get("section_filter"),
                 "rag_available_filtered_chunks": retrieval_result.get("available_filtered_chunks"),
+                "used_rerank": use_rerank,
+                "rerank_method": "rule_based" if use_rerank else None,
             },
         )
     except Exception as exc:
