@@ -5,6 +5,7 @@ from pathlib import Path
 os.environ["EMBEDDING_PROVIDER"] = "local"
 
 from agent_workflow import run_resume_agent_workflow
+from api_server import AgentWorkflowRequest, MarkdownReportRequest, RagRetrieveRequest, app as api_app
 from eval_runner import discover_eval_cases, load_eval_case, run_evaluations
 from rag import build_chunk_records, detect_resume_sections, get_local_embedding, split_text
 from rerank_utils import extract_keywords, rerank_chunks
@@ -360,6 +361,29 @@ Python、RAG、ChromaDB、Agent
     )
 
 
+def test_fastapi_files_and_request_models() -> None:
+    assert_true((BASE_DIR / "api_server.py").is_file(), "api_server.py 应该存在")
+    assert_true((BASE_DIR / "run_api.bat").is_file(), "run_api.bat 应该存在")
+    assert_true(api_app.title == "AI Resume Agent API", "FastAPI app 应该可以 import")
+
+    rag_request = RagRetrieveRequest(
+        resume_text="Python RAG 项目",
+        job_description="AI 应用开发岗位",
+    )
+    agent_request = AgentWorkflowRequest(
+        resume_text="Python Agent 项目",
+        job_description="Agent 开发岗位",
+    )
+    report_request = MarkdownReportRequest(
+        analysis="分析结果",
+        metadata={"mode": "agent_workflow"},
+    )
+    assert_true(rag_request.top_k == 5, "RAG 请求 top_k 默认值应该为 5")
+    assert_true(agent_request.use_rag is True, "Agent 请求默认应该启用 RAG")
+    assert_true(agent_request.use_rerank is False, "Agent 请求默认不启用 rerank")
+    assert_true(report_request.metadata["mode"] == "agent_workflow", "Markdown metadata 应可创建")
+
+
 if __name__ == "__main__":
     test_split_text()
     test_chunk_metadata()
@@ -379,4 +403,5 @@ if __name__ == "__main__":
     test_demo_polish_files_and_readme_sections()
     test_extract_keywords_and_rerank_chunks()
     test_rag_tool_and_agent_workflow_with_rerank()
+    test_fastapi_files_and_request_models()
     print("simple_test.py: all tests passed")

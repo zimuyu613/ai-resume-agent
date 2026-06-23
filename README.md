@@ -26,12 +26,14 @@ AI Resume Agent 是一个基于大语言模型、RAG Workflow 和轻量级 Agent
 - 固定 Agent Workflow 与 Workflow Steps 展示。
 - Trace / Observability：运行摘要、工具步骤、耗时、错误和 JSON 导出。
 - Eval Runner：使用脱敏样例验证 RAG、Agent Workflow 和 Trace 工程链路。
+- FastAPI Backend MVP：通过 HTTP 接口复用 RAG、Agent Workflow 和报告导出。
 - Markdown 分析报告导出。
 
 ## 技术栈
 
 - Python
 - Streamlit
+- FastAPI / Uvicorn
 - Gemini API（`google-genai` SDK）
 - Prompt Engineering
 - RAG
@@ -150,6 +152,33 @@ Embedding provider：
 
 Eval 结果会写入 `eval_results/eval_result_<timestamp>.json`。
 
+## FastAPI Backend MVP
+
+项目提供最小 FastAPI 后端，通过 HTTP 接口复用现有 `tools.py` 和 `agent_workflow.py`，没有复制核心 RAG 或 Agent 业务逻辑。
+
+支持接口：
+
+- `GET /api/health`：服务健康检查。
+- `POST /api/rag/retrieve`：RAG 检索与可选 lightweight rerank。
+- `POST /api/agent/workflow`：Agent Workflow、Workflow Steps 和 Trace。
+- `POST /api/report/markdown`：生成 Markdown 报告内容。
+
+启动命令：
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn api_server:app --reload --host 127.0.0.1 --port 8000
+```
+
+也可以双击 `run_api.bat`。启动后访问 API 文档：[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)。
+
+服务启动后可运行 smoke test：
+
+```powershell
+.\.venv\Scripts\python.exe api_smoke_test.py
+```
+
+Smoke test 会为 Agent 请求显式设置 `use_mock_llm=true`，因此不依赖真实 Gemini API。这个后端仍是 MVP，不包含登录、数据库历史记录、权限系统、异步任务队列、Docker 或生产级部署配置。
+
 ## Trace / Observability
 
 Agent Workflow 每次运行都会生成 `run_id`，记录输入长度、top_k、embedding provider、是否 fallback、总耗时、最终状态以及每个工具步骤的输入输出摘要、耗时和错误。
@@ -192,6 +221,8 @@ resume-agent/
 ├─ agent_workflow.py       # 固定 Tool Calling Workflow 与 Trace 接入
 ├─ trace_utils.py          # Trace dataclass、摘要、序列化与 JSON 保存
 ├─ eval_runner.py          # 工程型基础评测入口
+├─ api_server.py           # FastAPI health、RAG、Agent、Markdown 接口
+├─ api_smoke_test.py       # 已启动 API 的四接口 smoke test
 ├─ simple_test.py          # 快速、无真实 LLM 依赖的基础测试
 ├─ eval_cases/             # 可提交的脱敏 Eval 样例
 ├─ examples/               # 示例报告和 Trace 说明
@@ -201,6 +232,7 @@ resume-agent/
 ├─ requirements.txt        # Python 依赖
 ├─ .env.example            # 安全的环境变量模板
 ├─ run_app.bat             # Windows 一键启动脚本
+├─ run_api.bat             # Windows 一键启动 FastAPI
 └─ README.md
 ```
 
@@ -222,7 +254,7 @@ resume-agent/
 - 没有复杂 planning 和动态工具选择。
 - 没有多 Agent 协作。
 - 没有长期记忆。
-- 没有独立且完整的后端服务、鉴权、任务队列和部署方案。
+- FastAPI 仅为接口 MVP，没有鉴权、历史数据库、任务队列和生产部署方案。
 - Trace 不是生产级分布式观测系统。
 - 没有严格的模型质量评测、人工标注集或统计显著性分析。
 - Eval Runner 主要验证工程链路稳定性，不代表 Gemini 或其他真实模型的输出质量。
