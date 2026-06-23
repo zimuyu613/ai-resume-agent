@@ -289,6 +289,18 @@ def test_eval_cases_and_runner_imports() -> None:
     assert_true(callable(run_evaluations), "eval_runner.run_evaluations 应该可以被 import")
 
 
+def test_demo_polish_files_and_readme_sections() -> None:
+    assert_true((BASE_DIR / ".env.example").is_file(), ".env.example 应该存在")
+    assert_true(
+        (BASE_DIR / "examples" / "example_report.md").is_file(),
+        "examples/example_report.md 应该存在",
+    )
+
+    readme_text = (BASE_DIR / "README.md").read_text(encoding="utf-8")
+    for section_name in ["Agent Workflow", "Trace", "Eval Runner", "项目边界"]:
+        assert_true(section_name in readme_text, f"README.md 应该包含 {section_name} 小节")
+
+
 if __name__ == "__main__":
     test_split_text()
     test_chunk_metadata()
@@ -305,4 +317,5 @@ if __name__ == "__main__":
     test_trace_structures_and_json_serialization()
     test_agent_workflow_trace_without_rag()
     test_eval_cases_and_runner_imports()
+    test_demo_polish_files_and_readme_sections()
     print("simple_test.py: all tests passed")

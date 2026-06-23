@@ -1,7 +1,7 @@
-.venv/
 .env
-__pycache__/
+.venv/
+**/__pycache__/
 *.pyc
 chroma_db/
-outputs/traces/*.json
+outputs/traces/
 eval_results/
