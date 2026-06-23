@@ -5,6 +5,7 @@ from pathlib import Path
 os.environ["EMBEDDING_PROVIDER"] = "local"
 
 from agent_workflow import run_resume_agent_workflow
+from eval_runner import discover_eval_cases, load_eval_case, run_evaluations
 from rag import build_chunk_records, detect_resume_sections, get_local_embedding, split_text
 from tools import ToolResult, rag_retrieve_tool
 from trace_utils import TraceStep, WorkflowTrace, create_run_id, now_iso, trace_to_dict
@@ -272,6 +273,22 @@ def test_agent_workflow_trace_without_rag() -> None:
     assert_true(trace["steps"][0]["output_summary"]["skipped"] is True, "trace 应该记录 RAG 已跳过")
 
 
+def test_eval_cases_and_runner_imports() -> None:
+    eval_cases_dir = BASE_DIR / "eval_cases"
+    assert_true(eval_cases_dir.is_dir(), "eval_cases 目录应该存在")
+
+    case_paths = discover_eval_cases(eval_cases_dir)
+    assert_true(len(case_paths) >= 1, "eval_cases 至少应该包含一个完整 case")
+    for case_path in case_paths:
+        for file_name in ["resume.txt", "jd.txt", "expected.json"]:
+            assert_true((case_path / file_name).is_file(), f"{case_path.name} 缺少 {file_name}")
+        loaded_case = load_eval_case(case_path)
+        assert_true(bool(loaded_case["resume_text"]), f"{case_path.name} resume.txt 不应该为空")
+        assert_true(bool(loaded_case["job_description"]), f"{case_path.name} jd.txt 不应该为空")
+
+    assert_true(callable(run_evaluations), "eval_runner.run_evaluations 应该可以被 import")
+
+
 if __name__ == "__main__":
     test_split_text()
     test_chunk_metadata()
@@ -287,4 +304,5 @@ if __name__ == "__main__":
     test_agent_workflow_steps_with_mock_llm()
     test_trace_structures_and_json_serialization()
     test_agent_workflow_trace_without_rag()
+    test_eval_cases_and_runner_imports()
     print("simple_test.py: all tests passed")

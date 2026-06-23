@@ -1,0 +1,15 @@
+基本信息
+姓名：候选人 A（脱敏示例）
+求职意向：AI 应用开发工程师
+
+专业技能
+熟悉 Python、Streamlit、Gemini API 与 Prompt Engineering，能够使用 RAG、ChromaDB、sentence-transformers 构建 LLM 应用。了解 Agent Workflow、Tool Calling、Trace 和基础评测流程。
+
+项目经历
+AI Resume Agent：负责简历解析、section-aware chunking、向量检索和结构化分析。实现 local embedding fallback、RAG 召回片段展示、Agent 工具调用链及 trace JSON 导出。
+
+实习经历
+参与内部知识库助手原型开发，使用 Python 整理文档数据，协助验证检索结果并记录问题样例。
+
+自我评价
+重视可解释性和工程稳定性，能够从 Demo 出发逐步补充测试、日志和评测能力。

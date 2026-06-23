@@ -1,0 +1,5 @@
+{
+  "expected_sections": ["skills", "project_experience", "education"],
+  "expected_keywords": ["Python", "RAG", "LLM", "ChromaDB"],
+  "required_output_headings": ["岗位要求分析", "能力匹配", "差距", "优化建议"]
+}

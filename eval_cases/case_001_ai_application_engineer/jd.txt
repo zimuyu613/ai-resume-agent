@@ -1,0 +1,11 @@
+岗位名称：AI 应用开发工程师
+
+岗位职责：
+1. 使用 Python 开发面向业务场景的大模型应用。
+2. 负责 RAG 检索、Prompt Engineering、LLM 调用和 Agent Workflow 开发。
+3. 建设基础 Trace、日志和 Eval 机制，持续排查召回质量与工具调用状态。
+
+任职要求：
+1. 熟悉 Python，具备可演示的 AI 应用项目经验。
+2. 理解向量数据库、embedding、chunking 和 RAG 流程。
+3. 了解 Tool Calling、Agent 和大模型应用工程化方法。
