@@ -5,6 +5,7 @@ import streamlit as st
 from docx import Document
 from pypdf import PdfReader
 
+from agent_workflow import run_resume_agent_workflow
 from agent import run_agent_workflow, run_rag_workflow
 from rag import get_embedding_provider
 
@@ -290,11 +291,14 @@ def render_analysis_page() -> None:
     source_name = uploaded_source_name if uploaded_resume_text.strip() else "手动输入内容"
 
     st.subheader("Step 3：选择分析模式并生成报告")
-    rag_enabled = st.checkbox(
-        "启用 RAG 检索增强分析",
-        value=False,
-        help="RAG 模式会先从简历中检索相关片段，再生成分析结果。",
+    analysis_mode = st.radio(
+        "分析模式",
+        ["普通 LLM 分析", "RAG 检索增强分析", "Agent Workflow 分析"],
+        horizontal=True,
+        help="Agent Workflow 分析会按固定工具调用链路执行：RAG 检索工具 -> LLM 分析工具。",
     )
+    rag_enabled = analysis_mode in ["RAG 检索增强分析", "Agent Workflow 分析"]
+    agent_workflow_enabled = analysis_mode == "Agent Workflow 分析"
     rag_top_k = 3
     if rag_enabled:
         rag_top_k = st.slider("RAG 召回片段数量 top_k", min_value=1, max_value=8, value=3)
@@ -309,7 +313,16 @@ def render_analysis_page() -> None:
             st.warning("请先输入岗位描述，并上传或填写个人经历。")
         else:
             with st.spinner("正在分析中，请稍等..."):
-                if rag_enabled:
+                if agent_workflow_enabled:
+                    result = run_resume_agent_workflow(
+                        resume_text=final_resume_text,
+                        job_description=job_description,
+                        top_k=rag_top_k,
+                        use_rag=True,
+                        source_name=source_name,
+                        section_filter=section_filter,
+                    )
+                elif rag_enabled:
                     result = run_rag_workflow(
                         job_description,
                         final_resume_text,
@@ -323,15 +336,31 @@ def render_analysis_page() -> None:
             # 保存本次分析结果，避免点击下载按钮或切换 RAG 片段预览时页面 rerun 后结果消失。
             st.session_state["last_analysis_result"] = result
             st.session_state["last_analysis_rag_enabled"] = rag_enabled
+            st.session_state["last_analysis_agent_workflow_enabled"] = agent_workflow_enabled
 
     result = st.session_state.get("last_analysis_result")
     result_rag_enabled = st.session_state.get("last_analysis_rag_enabled", False)
+    result_agent_workflow_enabled = st.session_state.get("last_analysis_agent_workflow_enabled", False)
 
     if result:
         if result.get("error"):
             st.error(result["error"])
         else:
             st.success("分析完成")
+            if result_agent_workflow_enabled and result.get("workflow_steps"):
+                with st.expander("查看 Agent Workflow Steps", expanded=True):
+                    for index, step in enumerate(result["workflow_steps"], start=1):
+                        status = "成功" if step.get("success") else "失败"
+                        st.markdown(f"**Step {index}: {step.get('step_name', '')}**")
+                        st.write(f"tool_name：{step.get('tool_name', '')}")
+                        st.write(f"success：{status}")
+                        st.write(f"message：{step.get('message', '')}")
+                        data_summary = step.get("data_summary") or {}
+                        if data_summary:
+                            st.json(data_summary)
+                        if step.get("error"):
+                            st.error(step["error"])
+
             if result_rag_enabled and result.get("retrieved_chunk_count") is not None:
                 actual_count = result.get("retrieved_chunk_count", 0)
                 top_k = result.get("rag_top_k", actual_count)

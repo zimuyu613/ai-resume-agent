@@ -1,6 +1,11 @@
+import os
 from pathlib import Path
 
+os.environ["EMBEDDING_PROVIDER"] = "local"
+
+from agent_workflow import run_resume_agent_workflow
 from rag import build_chunk_records, detect_resume_sections, get_local_embedding, split_text
+from tools import ToolResult, rag_retrieve_tool
 
 
 BASE_DIR = Path(__file__).parent
@@ -146,6 +151,67 @@ def test_sample_files() -> None:
     assert_true(job_path.read_text(encoding="utf-8").strip(), "sample_job_description.txt 不应该为空")
 
 
+def test_tool_result_structure() -> None:
+    result = ToolResult(
+        success=True,
+        tool_name="demo_tool",
+        message="ok",
+        data={"value": 1},
+    )
+    result_dict = result.to_dict()
+    assert_true(result_dict["success"] is True, "ToolResult 应该包含 success")
+    assert_true(result_dict["tool_name"] == "demo_tool", "ToolResult 应该包含 tool_name")
+    assert_true(result_dict["error"] is None, "ToolResult 成功时 error 应该为 None")
+
+
+def test_rag_retrieve_tool_basic() -> None:
+    resume_text = """
+姓名：测试同学
+专业技能：Python、Streamlit、RAG、ChromaDB
+项目经历：实现过简历和岗位匹配分析 Demo。
+"""
+    job_description = "招聘 AI 应用开发实习生，要求 Python、RAG、向量数据库经验。"
+    result = rag_retrieve_tool(
+        resume_text=resume_text,
+        job_description=job_description,
+        top_k=2,
+    )
+    assert_true(result.success, f"rag_retrieve_tool 不应直接崩溃：{result.error}")
+    assert_true("chunks" in result.data, "rag_retrieve_tool 应该返回 chunks")
+    assert_true(result.data["retrieved_chunk_count"] >= 1, "简单输入至少应召回 1 个 chunk")
+
+
+def test_agent_workflow_steps_with_mock_llm() -> None:
+    resume_text = "专业技能：Python、RAG、ChromaDB。项目经历：AI Resume Agent。"
+    job_description = "AI 应用开发实习生，要求 Python 和 RAG 项目经验。"
+
+    def mock_llm(_prompt: str) -> str:
+        return """
+## 岗位要求分析
+需要 Python 和 RAG 项目经验。
+
+## 个人能力分析
+简历中体现了 Python、RAG 和 ChromaDB。
+
+## 匹配度分析
+候选人与岗位有基础匹配。
+
+## 简历优化建议
+补充量化指标和项目效果。
+"""
+
+    result = run_resume_agent_workflow(
+        resume_text=resume_text,
+        job_description=job_description,
+        top_k=2,
+        use_rag=True,
+        llm_callable=mock_llm,
+    )
+    assert_true("workflow_steps" in result, "Agent Workflow 应该返回 workflow_steps")
+    assert_true(len(result["workflow_steps"]) >= 2, "Agent Workflow 应该至少包含检索和分析两步")
+    assert_true(all("tool_name" in step for step in result["workflow_steps"]), "每一步应该记录 tool_name")
+
+
 if __name__ == "__main__":
     test_split_text()
     test_chunk_metadata()
@@ -156,4 +222,7 @@ if __name__ == "__main__":
     test_empty_text()
     test_local_embedding()
     test_sample_files()
+    test_tool_result_structure()
+    test_rag_retrieve_tool_basic()
+    test_agent_workflow_steps_with_mock_llm()
     print("simple_test.py: all tests passed")
