@@ -384,6 +384,20 @@ def test_fastapi_files_and_request_models() -> None:
     assert_true(report_request.metadata["mode"] == "agent_workflow", "Markdown metadata 应可创建")
 
 
+def test_final_hardening_documents() -> None:
+    document_paths = [
+        "FINAL_CHECKLIST.md",
+        "INTERVIEW_NOTES.md",
+        "docs/architecture.md",
+        "docs/api.md",
+        "docs/eval.md",
+    ]
+    readme_text = (BASE_DIR / "README.md").read_text(encoding="utf-8")
+    for relative_path in document_paths:
+        assert_true((BASE_DIR / relative_path).is_file(), f"{relative_path} 应该存在")
+        assert_true(relative_path in readme_text, f"README.md 应该链接 {relative_path}")
+
+
 if __name__ == "__main__":
     test_split_text()
     test_chunk_metadata()
@@ -404,4 +418,5 @@ if __name__ == "__main__":
     test_extract_keywords_and_rerank_chunks()
     test_rag_tool_and_agent_workflow_with_rerank()
     test_fastapi_files_and_request_models()
+    test_final_hardening_documents()
     print("simple_test.py: all tests passed")

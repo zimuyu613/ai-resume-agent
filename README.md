@@ -13,6 +13,14 @@ AI Resume Agent 是一个基于大语言模型、RAG Workflow 和轻量级 Agent
 
 项目重点不是堆叠 Agent 概念，而是展示一条可运行、可解释、可追踪、可基础验证的 AI 应用链路。
 
+## 项目文档
+
+- [最终运行与演示检查清单](FINAL_CHECKLIST.md)
+- [实习面试讲解笔记](INTERVIEW_NOTES.md)
+- [项目架构说明](docs/architecture.md)
+- [FastAPI 接口说明](docs/api.md)
+- [Eval Runner 说明](docs/eval.md)
+
 ## 核心功能
 
 - txt / pdf / docx 简历文件解析。
@@ -226,6 +234,7 @@ resume-agent/
 ├─ simple_test.py          # 快速、无真实 LLM 依赖的基础测试
 ├─ eval_cases/             # 可提交的脱敏 Eval 样例
 ├─ examples/               # 示例报告和 Trace 说明
+├─ docs/                   # 架构、API 和 Eval 专题文档
 ├─ samples/                # 页面演示用简历和岗位 JD
 ├─ outputs/traces/         # 运行生成的 Trace，Git 忽略
 ├─ eval_results/           # 运行生成的 Eval 结果，Git 忽略
@@ -233,6 +242,8 @@ resume-agent/
 ├─ .env.example            # 安全的环境变量模板
 ├─ run_app.bat             # Windows 一键启动脚本
 ├─ run_api.bat             # Windows 一键启动 FastAPI
+├─ FINAL_CHECKLIST.md       # 运行、演示、安全和面试检查清单
+├─ INTERVIEW_NOTES.md       # 面试讲解参考
 └─ README.md
 ```
 
@@ -263,7 +274,7 @@ resume-agent/
 ## 后续优化方向
 
 - 在数据规模和质量要求提升后评估 cross-encoder reranker。
-- 使用 FastAPI 提供独立后端服务。
+- 将 FastAPI MVP 升级为带统一错误码、超时和配置管理的服务层。
 - 支持更多 LLM 和 embedding provider。
 - 扩充 Eval 数据、检索指标和真实模型质量评测。
 - 在需求复杂度确实提升后评估 LangChain / LangGraph。
