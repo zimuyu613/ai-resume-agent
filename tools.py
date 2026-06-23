@@ -7,7 +7,7 @@ from docx import Document
 from pypdf import PdfReader
 
 from agent import call_llm, extract_section, run_agent_workflow
-from prompts import RAG_ANALYSIS_PROMPT
+from prompts import COMPREHENSIVE_ANALYSIS_PROMPT, RAG_ANALYSIS_PROMPT
 from rag import retrieve_relevant_chunks_with_sources
 
 
@@ -195,6 +195,12 @@ def llm_match_analysis_tool(
             )
             full_report = (llm_callable or call_llm)(prompt)
             analysis = _split_report(full_report)
+        elif llm_callable:
+            prompt = COMPREHENSIVE_ANALYSIS_PROMPT.format(
+                job_description=job_description[:4000],
+                resume_text=resume_text[:4000],
+            )
+            analysis = _split_report(llm_callable(prompt))
         else:
             analysis = run_agent_workflow(job_description, resume_text)
 

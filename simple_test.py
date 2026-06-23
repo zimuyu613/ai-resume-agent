@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -6,6 +7,7 @@ os.environ["EMBEDDING_PROVIDER"] = "local"
 from agent_workflow import run_resume_agent_workflow
 from rag import build_chunk_records, detect_resume_sections, get_local_embedding, split_text
 from tools import ToolResult, rag_retrieve_tool
+from trace_utils import TraceStep, WorkflowTrace, create_run_id, now_iso, trace_to_dict
 
 
 BASE_DIR = Path(__file__).parent
@@ -210,6 +212,64 @@ def test_agent_workflow_steps_with_mock_llm() -> None:
     assert_true("workflow_steps" in result, "Agent Workflow 应该返回 workflow_steps")
     assert_true(len(result["workflow_steps"]) >= 2, "Agent Workflow 应该至少包含检索和分析两步")
     assert_true(all("tool_name" in step for step in result["workflow_steps"]), "每一步应该记录 tool_name")
+    assert_true("trace" in result, "Agent Workflow 应该返回 trace")
+    assert_true(bool(result["trace"].get("run_id")), "trace 应该包含 run_id")
+    assert_true(len(result["trace"].get("steps", [])) >= 2, "trace 应该记录工具步骤")
+    assert_true(result["trace"].get("duration_ms") is not None, "trace 应该记录总耗时")
+    assert_true(bool(result["trace"].get("start_time")), "trace 应该记录开始时间")
+    assert_true(bool(result["trace"].get("end_time")), "trace 应该记录结束时间")
+
+
+def test_trace_structures_and_json_serialization() -> None:
+    run_id = create_run_id()
+    assert_true(isinstance(run_id, str) and bool(run_id), "create_run_id 应该生成非空字符串")
+
+    timestamp = now_iso()
+    step = TraceStep(
+        step_name="demo_step",
+        tool_name="demo_tool",
+        success=True,
+        message="ok",
+        input_summary={"input_length": 10},
+        output_summary={"result_count": 1},
+        start_time=timestamp,
+        end_time=timestamp,
+        duration_ms=1.5,
+    )
+    trace = WorkflowTrace(
+        run_id=run_id,
+        mode="test",
+        start_time=timestamp,
+        end_time=timestamp,
+        duration_ms=1.5,
+        resume_length=10,
+        job_description_length=20,
+        top_k=2,
+        embedding_provider="local",
+        used_rag=True,
+        used_fallback=False,
+        steps=[step],
+        final_status="success",
+    )
+    trace_dict = trace_to_dict(trace)
+    serialized = json.dumps(trace_dict, ensure_ascii=False)
+    assert_true(bool(serialized), "trace_to_dict 结果应该可以被 json.dumps 序列化")
+    assert_true(trace_dict["steps"][0]["tool_name"] == "demo_tool", "trace 应该保留步骤信息")
+
+
+def test_agent_workflow_trace_without_rag() -> None:
+    def mock_llm(_prompt: str) -> str:
+        return "## 岗位要求分析\n测试结果"
+
+    result = run_resume_agent_workflow(
+        resume_text="Python 项目经历",
+        job_description="Python 开发岗位",
+        use_rag=False,
+        llm_callable=mock_llm,
+    )
+    trace = result["trace"]
+    assert_true(trace["used_rag"] is False, "use_rag=False 时 trace 应该记录未使用 RAG")
+    assert_true(trace["steps"][0]["output_summary"]["skipped"] is True, "trace 应该记录 RAG 已跳过")
 
 
 if __name__ == "__main__":
@@ -225,4 +285,6 @@ if __name__ == "__main__":
     test_tool_result_structure()
     test_rag_retrieve_tool_basic()
     test_agent_workflow_steps_with_mock_llm()
+    test_trace_structures_and_json_serialization()
+    test_agent_workflow_trace_without_rag()
     print("simple_test.py: all tests passed")

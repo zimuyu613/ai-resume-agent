@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 from pathlib import Path
 
@@ -109,6 +110,63 @@ def build_export_report(result: dict, rag_enabled: bool) -> str:
             )
 
     return "\n".join(sections).strip() + "\n"
+
+
+def render_agent_trace(result: dict) -> None:
+    """Render the lightweight Agent Workflow trace and JSON export."""
+    trace = result.get("trace") or {}
+    if not trace:
+        return
+
+    st.subheader("Trace 运行摘要")
+    summary_columns = st.columns(4)
+    summary_columns[0].metric("run_id", trace.get("run_id", "-"))
+    summary_columns[1].metric("mode", trace.get("mode", "-"))
+    duration = trace.get("duration_ms")
+    summary_columns[2].metric("总耗时", f"{duration:.2f} ms" if duration is not None else "-")
+    summary_columns[3].metric("final_status", trace.get("final_status", "-"))
+
+    st.write(
+        {
+            "resume_length": trace.get("resume_length"),
+            "job_description_length": trace.get("job_description_length"),
+            "top_k": trace.get("top_k"),
+            "used_rag": trace.get("used_rag"),
+            "embedding_provider": trace.get("embedding_provider"),
+            "used_fallback": trace.get("used_fallback"),
+        }
+    )
+
+    st.subheader("Trace Steps 明细")
+    for index, step in enumerate(trace.get("steps", []), start=1):
+        title = f"Step {index}: {step.get('step_name', '')} / {step.get('tool_name', '')}"
+        with st.expander(title):
+            st.write(f"success：{'成功' if step.get('success') else '失败'}")
+            st.write(f"duration_ms：{step.get('duration_ms', 0):.2f}")
+            st.write(f"message：{step.get('message', '')}")
+            st.markdown("**input_summary**")
+            st.json(step.get("input_summary") or {})
+            st.markdown("**output_summary**")
+            st.json(step.get("output_summary") or {})
+            if step.get("error"):
+                st.error(step["error"])
+
+    st.subheader("Trace JSON")
+    st.json(trace)
+    trace_json = json.dumps(trace, ensure_ascii=False, indent=2)
+    run_id = trace.get("run_id", "unknown")
+    st.download_button(
+        "下载 Trace JSON",
+        data=trace_json,
+        file_name=f"trace_{run_id}.json",
+        mime="application/json",
+        key=f"download_trace_{run_id}",
+    )
+
+    if result.get("trace_save_error"):
+        st.warning(f"Trace 已在页面生成，但保存到本地失败：{result['trace_save_error']}")
+    elif result.get("trace_path"):
+        st.caption(f"Trace 已保存：{result['trace_path']}")
 
 
 def read_txt_file(file_bytes: bytes) -> str:
@@ -420,6 +478,9 @@ def render_analysis_page() -> None:
                 file_name="resume_match_report.md",
                 mime="text/markdown",
             )
+
+        if result_agent_workflow_enabled:
+            render_agent_trace(result)
 
         tab1, tab2, tab3, tab4 = st.tabs(
             ["岗位要求分析", "个人能力分析", "匹配度分析", "简历优化建议"]
