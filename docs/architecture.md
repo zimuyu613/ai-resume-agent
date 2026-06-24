@@ -105,6 +105,8 @@ FastAPI 将核心能力暴露为稳定的 JSON 接口，展示请求模型、参
 
 当前实现是单次调用级 fallback，不包含熔断状态机、流量切换、重试队列、成本策略和集中监控。
 
+**重要区分**：Mock Provider 用于本地测试和 Eval，不依赖外部服务；`fallback_to_mock` 是真实 Provider（Gemini / OpenAI-compatible）调用失败后的工程降级。Trace 中 `fallback_used=true` 表示真实 Provider 失败后降级到 Mock，不代表真实模型调用成功。判断真实模型是否成功应同时检查 `fallback_used=false` 且 `provider_error` 为空。
+
 ## Local Mode 数据流
 
 ```text

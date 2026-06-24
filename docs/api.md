@@ -160,6 +160,8 @@ GET /api/llm/health?provider=mock&use_mock=true
 
 **真实 LLM 依赖**：Gemini 和 OpenAI-compatible 模式依赖对应 Key。设置 `use_mock_llm=true` 或 `llm_provider="mock"` 时使用确定性 mock，仅用于 smoke test 和接口链路验证。
 
+**Fallback 语义**：`fallback_used=true` 表示真实 Provider 失败后降级到 Mock，此时 `llm_provider` 变为 `mock`，`original_provider` 记录原始真实 Provider，`provider_error` 记录失败原因。这不是真实模型调用成功。判断真实模型成功应检查 `fallback_used=false` 且 `provider_error` 为空。
+
 **当前限制**：固定工具流程、同步执行；没有复杂 planning、任务队列、历史记录或权限系统。
 
 ## POST `/api/report/markdown`

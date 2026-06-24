@@ -18,6 +18,7 @@ from llm_provider import (
     ProviderHealthResult,
     check_llm_provider_health,
     generate_with_llm,
+    get_llm_provider_from_env,
 )
 from rag import build_chunk_records, detect_resume_sections, get_local_embedding, split_text
 from rag_eval_utils import evaluate_retrieval_result
@@ -455,6 +456,7 @@ def test_api_client_imports_and_offline_error() -> None:
 
 
 def test_multi_model_provider_offline_paths() -> None:
+    # --- basic data structure creation ---
     created = LLMResult(
         success=True,
         provider="mock",
@@ -463,11 +465,13 @@ def test_multi_model_provider_offline_paths() -> None:
     )
     assert_true(created.provider == "mock", "LLMResult 应该可以创建")
 
+    # --- explicit mock provider ---
     mock_result = generate_with_llm("测试 Prompt", use_mock=True)
     assert_true(mock_result.success, "mock LLM 应该返回 success=True")
     assert_true(mock_result.provider == "mock", "mock LLM 应记录 provider=mock")
     assert_true("岗位要求分析" in mock_result.text, "mock LLM 应返回稳定结构")
 
+    # --- mock health check ---
     health_record = ProviderHealthResult(
         provider="mock",
         model="mock-structured-v1",
@@ -478,6 +482,50 @@ def test_multi_model_provider_offline_paths() -> None:
     mock_health = check_llm_provider_health(provider="mock")
     assert_true(mock_health.available, "Mock Provider 健康检查应该通过")
 
+    # --- get_llm_provider_from_env() must NOT silently downgrade on missing key ---
+    original_gemini_key = os.environ.pop("GEMINI_API_KEY", None)
+    try:
+        resolved = get_llm_provider_from_env()
+        assert_true(
+            resolved == "gemini",
+            f"缺少 GEMINI_API_KEY 时 get_llm_provider_from_env() 应返回 'gemini'，实际返回 {resolved}",
+        )
+    finally:
+        if original_gemini_key is not None:
+            os.environ["GEMINI_API_KEY"] = original_gemini_key
+
+    # --- gemini fallback when GEMINI_API_KEY is missing ---
+    original_gemini_key = os.environ.pop("GEMINI_API_KEY", None)
+    try:
+        gemini_no_key = generate_with_llm(
+            "测试 Prompt",
+            provider="gemini",
+            fallback_to_mock=False,
+        )
+        gemini_fallback = generate_with_llm(
+            "测试 Prompt",
+            provider="gemini",
+            fallback_to_mock=True,
+        )
+    finally:
+        if original_gemini_key is not None:
+            os.environ["GEMINI_API_KEY"] = original_gemini_key
+
+    assert_true(gemini_no_key.success is False, "缺少 Gemini Key 且不 fallback 时应失败")
+    assert_true("API Key" in (gemini_no_key.error or ""), "错误应指出缺少 API Key")
+    assert_true(gemini_fallback.success, "启用 fallback 后缺少 Gemini Key 应返回 Mock 结果")
+    assert_true(gemini_fallback.provider == "mock", "fallback provider 应该为 mock")
+    assert_true(gemini_fallback.fallback_used, "Gemini fallback 结果应记录 fallback_used=True")
+    assert_true(
+        gemini_fallback.original_provider == "gemini",
+        "Gemini fallback 结果应记录 original_provider=gemini",
+    )
+    assert_true(
+        bool(gemini_fallback.error),
+        "Gemini fallback 结果应保留 provider_error",
+    )
+
+    # --- openai_compatible fallback when keys are missing ---
     original_key = os.environ.pop("OPENAI_COMPATIBLE_API_KEY", None)
     original_url = os.environ.pop("OPENAI_COMPATIBLE_BASE_URL", None)
     try:
@@ -522,6 +570,7 @@ def test_multi_model_provider_offline_paths() -> None:
     )
     assert_true(bool(fallback_workflow["trace"]["provider_error"]), "Trace 应记录 provider_error")
 
+    # --- mock provider through Agent Workflow ---
     workflow = run_resume_agent_workflow(
         resume_text="Python RAG 项目",
         job_description="AI 应用开发岗位",

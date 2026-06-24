@@ -61,16 +61,12 @@ def normalize_provider_error(error: Exception | str) -> str:
 
 
 def get_llm_provider_from_env() -> str:
-    """Resolve the default provider; use mock when the configured provider has no key."""
+    """Read and normalise the LLM_PROVIDER env var.  Does *not* check for API keys —
+    missing-key handling belongs in generate_with_llm() so the fallback path can record
+    original_provider / provider_error correctly."""
     provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
     if provider not in SUPPORTED_LLM_PROVIDERS:
-        provider = "gemini"
-    if provider == "mock":
-        return "mock"
-    if provider == "gemini" and not os.getenv("GEMINI_API_KEY"):
-        return "mock"
-    if provider == "openai_compatible" and not os.getenv("OPENAI_COMPATIBLE_API_KEY"):
-        return "mock"
+        return "gemini"
     return provider
 
 
@@ -104,7 +100,8 @@ def _mock_result(
         error=provider_error,
         raw={
             "mode": "deterministic_mock",
-            "fallback_used": original_provider is not None,
+            "result_error": None,
+            "provider_error": provider_error,
             "original_provider": original_provider,
             "fallback_provider": "mock" if original_provider else None,
         },
@@ -127,7 +124,7 @@ def _format_gemini_error(error: Exception) -> str:
     return f"Gemini 调用失败：{message}"
 
 
-def _generate_gemini(prompt: str, model: str | None, timeout: int) -> LLMResult:
+def _generate_gemini(prompt: str, model: str | None, timeout: int, max_retries: int = 5) -> LLMResult:
     api_key = os.getenv("GEMINI_API_KEY")
     selected_model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     if not api_key:
@@ -139,7 +136,8 @@ def _generate_gemini(prompt: str, model: str | None, timeout: int) -> LLMResult:
     )
     retryable = ("503", "unavailable", "timeout", "connection", "temporarily unavailable")
     last_error: Exception | None = None
-    for attempt in range(5):
+    total_attempts = max(max_retries, 1)
+    for attempt in range(total_attempts):
         try:
             response = client.models.generate_content(model=selected_model, contents=prompt)
             text = response.text or ""
@@ -148,7 +146,7 @@ def _generate_gemini(prompt: str, model: str | None, timeout: int) -> LLMResult:
             return LLMResult(True, "gemini", selected_model, text)
         except Exception as exc:
             last_error = exc
-            if any(keyword in str(exc).lower() for keyword in retryable) and attempt < 4:
+            if any(keyword in str(exc).lower() for keyword in retryable) and attempt < total_attempts - 1:
                 time.sleep(2 * (attempt + 1))
                 continue
             break
@@ -239,8 +237,13 @@ def generate_with_llm(
     use_mock: bool = False,
     timeout: int = 60,
     fallback_to_mock: bool = True,
+    max_retries: int = 5,
 ) -> LLMResult:
-    """Generate text through Gemini, an OpenAI-compatible endpoint, or deterministic mock."""
+    """Generate text through Gemini, an OpenAI-compatible endpoint, or deterministic mock.
+
+    max_retries only applies to the Gemini provider (per-request retry on transient
+    errors).  Health-check callers should pass a small value (0 or 1) to avoid hanging.
+    """
     selected_provider = "mock" if use_mock else (provider or get_llm_provider_from_env())
     selected_provider = selected_provider.strip().lower()
     if selected_provider not in SUPPORTED_LLM_PROVIDERS:
@@ -256,7 +259,7 @@ def generate_with_llm(
     if selected_provider == "mock":
         return _mock_result(model)
     if selected_provider == "gemini":
-        result = _generate_gemini(full_prompt, model, timeout)
+        result = _generate_gemini(full_prompt, model, timeout, max_retries=max_retries)
     else:
         result = _generate_openai_compatible(full_prompt, model, timeout)
 
@@ -311,6 +314,7 @@ def check_llm_provider_health(
         model=model,
         timeout=timeout,
         fallback_to_mock=False,
+        max_retries=1,
     )
     latency_ms = round((perf_counter() - started) * 1000, 2)
     return ProviderHealthResult(

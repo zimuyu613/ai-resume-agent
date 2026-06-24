@@ -241,6 +241,8 @@ Streamlit 侧边栏可以执行 Provider 健康检查，并可选择“模型失
 
 当前实现不包含复杂熔断、限流、重试队列、成本统计或生产级监控。Fallback 到 Mock 只代表工程链路可继续运行，不代表真实模型调用成功或回答质量可用。
 
+**重要区分**：Mock Provider 用于本地测试和 Eval，不依赖外部服务；`fallback_to_mock` 是真实 Provider（Gemini / OpenAI-compatible）调用失败后的工程降级。Trace 中 `fallback_used=true` 时，`original_provider` 记录原始真实 Provider，`provider_error` 记录失败原因，此时 `llm_provider` 已变为 `mock`。判断真实模型是否成功应检查 `fallback_used=false` 且 `provider_error` 为空。
+
 ## Trace / Observability
 
 Agent Workflow 每次运行都会生成 `run_id`，记录输入长度、top_k、embedding provider、是否 fallback、总耗时、最终状态以及每个工具步骤的输入输出摘要、耗时和错误。

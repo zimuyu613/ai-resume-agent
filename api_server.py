@@ -11,7 +11,7 @@ from llm_provider import check_llm_provider_health
 from tools import export_markdown_tool, rag_retrieve_tool
 
 
-PROJECT_VERSION = "v2.3-multi-model-provider-mvp"
+PROJECT_VERSION = "v2.4-provider-health-check-fallback-mvp"
 
 app = FastAPI(
     title="AI Resume Agent API",
