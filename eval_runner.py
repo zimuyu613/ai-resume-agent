@@ -4,10 +4,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Eval must be runnable without model downloads or external API access.
-os.environ["EMBEDDING_PROVIDER"] = "local"
+
+EVAL_EMBEDDING_PROVIDERS = ["local"]
+# Keep the default eval deterministic and independent from model downloads/APIs.
+os.environ["EMBEDDING_PROVIDER"] = EVAL_EMBEDDING_PROVIDERS[0]
 
 from agent_workflow import run_resume_agent_workflow
+from rag_eval_utils import evaluate_retrieval_result
 from tools import rag_retrieve_tool
 
 
@@ -70,8 +73,35 @@ def _trace_is_valid(workflow_result: dict[str, Any]) -> bool:
     return bool(trace.get("run_id") and trace.get("steps"))
 
 
+def _compare_rerank(rag_metrics: dict[str, Any], rerank_metrics: dict[str, Any]) -> dict[str, Any]:
+    rag_recall_3 = float(rag_metrics.get("recall_at_k", {}).get("3", 0.0))
+    rerank_recall_3 = float(rerank_metrics.get("recall_at_k", {}).get("3", 0.0))
+    rag_mrr = float(rag_metrics.get("mrr", 0.0))
+    rerank_mrr = float(rerank_metrics.get("mrr", 0.0))
+    recall_delta = round(rerank_recall_3 - rag_recall_3, 4)
+    mrr_delta = round(rerank_mrr - rag_mrr, 4)
+
+    if recall_delta > 0 or mrr_delta > 0:
+        status = "improved"
+    elif recall_delta == 0 and mrr_delta == 0:
+        status = "same"
+    else:
+        status = "worse"
+
+    return {
+        "status": status,
+        "rerank_improved": status == "improved",
+        "recall_at_3_delta": recall_delta,
+        "mrr_delta": mrr_delta,
+        "improvement_summary": (
+            f"Rerank is {status}: Recall@3 delta={recall_delta:+.4f}, "
+            f"MRR delta={mrr_delta:+.4f}."
+        ),
+    }
+
+
 def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
-    """Run deterministic RAG, Agent, trace and non-RAG workflow checks."""
+    """Evaluate retrieval quality plus the existing Agent engineering checks."""
     resume_text = case["resume_text"]
     job_description = case["job_description"]
     expected = case["expected"]
@@ -84,27 +114,16 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
         source_name=f"{case['case_name']}/resume.txt",
     )
     retrieved_chunks = rag_result.data.get("chunks", []) if rag_result.success else []
-    retrieved_sections = sorted({chunk.get("section", "unknown") for chunk in retrieved_chunks})
-    expected_sections_hit = sorted(
-        set(expected.get("expected_sections", [])) & set(retrieved_sections)
-    )
-    retrieved_text = "\n".join(chunk.get("text", "") for chunk in retrieved_chunks)
-    expected_keywords_hit = _contains_hits(
-        retrieved_text,
-        expected.get("expected_keywords", []),
-    )
+    rag_metrics = evaluate_retrieval_result(retrieved_chunks, expected)
     rag_retrieve_passed = bool(
         rag_result.success
         and retrieved_chunks
-        and expected_sections_hit
-        and expected_keywords_hit
+        and rag_metrics["section_metrics"]["section_hit_rate"] > 0
+        and rag_metrics["keyword_metrics"]["keyword_hit_rate"] > 0
+        and rag_metrics["gold_metrics"]["gold_recall"] > 0
     )
-    if not rag_result.success:
-        errors.append(f"RAG retrieval error: {rag_result.error}")
-    elif not expected_sections_hit:
-        errors.append("RAG retrieval did not hit any expected section.")
-    elif not expected_keywords_hit:
-        errors.append("RAG retrieval did not hit any expected keyword.")
+    if not rag_retrieve_passed:
+        errors.append(f"RAG retrieval quality check failed: {rag_result.error or 'no expected evidence hit'}")
 
     rerank_result = rag_retrieve_tool(
         resume_text=resume_text,
@@ -114,6 +133,7 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
         use_rerank=True,
     )
     reranked_chunks = rerank_result.data.get("chunks", []) if rerank_result.success else []
+    rerank_metrics = evaluate_retrieval_result(reranked_chunks, expected)
     rerank_keyword_hits = sorted(
         {
             keyword
@@ -121,24 +141,21 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
             for keyword in chunk.get("keyword_hits", [])
         }
     )
-    reranked_text = "\n".join(chunk.get("text", "") for chunk in reranked_chunks)
-    rerank_expected_keywords_hit = _contains_hits(
-        reranked_text,
-        expected.get("expected_keywords", []),
-    )
     rerank_passed = bool(
         rerank_result.success
         and reranked_chunks
         and rerank_result.data.get("used_rerank") is True
         and all("rerank_score" in chunk for chunk in reranked_chunks)
-        and rerank_expected_keywords_hit
+        and rerank_metrics["gold_metrics"]["gold_recall"] > 0
     )
     if not rerank_passed:
-        errors.append(f"Rerank check failed: {rerank_result.error or 'missing scores or keyword hits'}")
+        errors.append(f"Rerank quality check failed: {rerank_result.error or 'missing score/evidence'}")
+
     top_rerank_score = max(
         (float(chunk["rerank_score"]) for chunk in reranked_chunks if "rerank_score" in chunk),
         default=None,
     )
+    rerank_comparison = _compare_rerank(rag_metrics, rerank_metrics)
 
     agent_result = run_resume_agent_workflow(
         resume_text=resume_text,
@@ -151,9 +168,7 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
     )
     analysis = agent_result.get("analysis", "")
     agent_workflow_passed = bool(
-        agent_result.get("success")
-        and analysis
-        and agent_result.get("workflow_steps")
+        agent_result.get("success") and analysis and agent_result.get("workflow_steps")
     )
     trace_passed = bool(
         _trace_is_valid(agent_result)
@@ -192,7 +207,7 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
         and non_rag_steps[0].get("output_summary", {}).get("skipped") is True
     )
     if not non_rag_workflow_passed:
-        errors.append("Non-RAG workflow did not complete or record the skipped RAG step.")
+        errors.append("Non-RAG workflow did not record the skipped RAG step.")
 
     overall_passed = bool(
         rag_retrieve_passed
@@ -205,8 +220,14 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
     return {
         "case_name": case["case_name"],
         "llm_mode": "mock",
+        "embedding_provider": EVAL_EMBEDDING_PROVIDERS[0],
         "rag_retrieve_passed": rag_retrieve_passed,
+        "rag_metrics": rag_metrics,
         "rerank_passed": rerank_passed,
+        "rerank_metrics": rerank_metrics,
+        "rerank_comparison": rerank_comparison,
+        "rerank_improved": rerank_comparison["rerank_improved"],
+        "improvement_summary": rerank_comparison["improvement_summary"],
         "rerank_keyword_hits": rerank_keyword_hits,
         "rerank_score": top_rerank_score,
         "used_rerank": rerank_result.data.get("used_rerank", False),
@@ -216,27 +237,136 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
         "required_headings_passed": required_headings_passed,
         "required_headings_status": required_headings_status,
         "required_headings_hit": required_headings_hit,
-        "expected_sections_hit": expected_sections_hit,
-        "expected_keywords_hit": expected_keywords_hit,
-        "retrieved_chunk_count": len(retrieved_chunks),
+        # Keep the original compact fields for backward-readable eval JSON.
+        "expected_sections_hit": rag_metrics["section_metrics"]["hit_sections"],
+        "expected_keywords_hit": rag_metrics["keyword_metrics"]["hit_keywords"],
+        "retrieved_chunk_count": rag_metrics["retrieved_count"],
         "errors": errors,
         "overall_passed": overall_passed,
+    }
+
+
+def _average(values: list[float]) -> float:
+    return round(sum(values) / len(values), 4) if values else 0.0
+
+
+def _aggregate_retrieval(case_results: list[dict[str, Any]], metrics_key: str) -> dict[str, Any]:
+    metrics = [result[metrics_key] for result in case_results]
+    return {
+        "average_recall_at_k": {
+            k: _average([float(item["recall_at_k"].get(k, 0.0)) for item in metrics])
+            for k in ("1", "3", "5")
+        },
+        "average_mrr": _average([float(item.get("mrr", 0.0)) for item in metrics]),
+        "average_gold_recall": _average(
+            [float(item["gold_metrics"].get("gold_recall", 0.0)) for item in metrics]
+        ),
+        "average_section_hit_rate": _average(
+            [float(item["section_metrics"].get("section_hit_rate", 0.0)) for item in metrics]
+        ),
+        "average_keyword_hit_rate": _average(
+            [float(item["keyword_metrics"].get("keyword_hit_rate", 0.0)) for item in metrics]
+        ),
+    }
+
+
+def build_aggregate_metrics(case_results: list[dict[str, Any]]) -> dict[str, Any]:
+    statuses = [result["rerank_comparison"]["status"] for result in case_results]
+    return {
+        "rag": _aggregate_retrieval(case_results, "rag_metrics"),
+        "rerank": _aggregate_retrieval(case_results, "rerank_metrics"),
+        "rerank_comparison": {
+            "improved_cases": statuses.count("improved"),
+            "same_cases": statuses.count("same"),
+            "worse_cases": statuses.count("worse"),
+        },
     }
 
 
 def save_eval_results(
     results: dict[str, Any],
     results_dir: str | Path = DEFAULT_RESULTS_DIR,
+    timestamp: str | None = None,
 ) -> str:
-    """Save one aggregate eval run and return the absolute JSON path."""
     output_dir = Path(results_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = timestamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_path = output_dir / f"eval_result_{timestamp}.json"
-    output_path.write_text(
-        json.dumps(results, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    output_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(output_path.resolve())
+
+
+def save_eval_summary(
+    results: dict[str, Any],
+    results_dir: str | Path = DEFAULT_RESULTS_DIR,
+    timestamp: str | None = None,
+) -> str:
+    output_dir = Path(results_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = timestamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output_path = output_dir / f"eval_summary_{timestamp}.md"
+    aggregate = results["aggregate_metrics"]
+    rag = aggregate["rag"]
+    rerank = aggregate["rerank"]
+
+    lines = [
+        "# RAG Evaluation Summary",
+        "",
+        f"- 评测时间：{results['run_time']}",
+        f"- Embedding provider：{', '.join(results['embedding_providers'])}",
+        f"- 总 case 数：{results['total_cases']}",
+        f"- 通过：{results['passed_cases']}",
+        f"- 失败：{results['failed_cases']}",
+        f"- 通过率：{results['pass_rate']:.1f}%",
+        "",
+        "## Aggregate Metrics",
+        "",
+        "| Metric | RAG | RAG + Rerank |",
+        "| --- | ---: | ---: |",
+    ]
+    for k in ("1", "3", "5"):
+        lines.append(
+            f"| Recall@{k} | {rag['average_recall_at_k'][k]:.4f} | "
+            f"{rerank['average_recall_at_k'][k]:.4f} |"
+        )
+    lines.extend(
+        [
+            f"| MRR | {rag['average_mrr']:.4f} | {rerank['average_mrr']:.4f} |",
+            f"| Gold Recall | {rag['average_gold_recall']:.4f} | {rerank['average_gold_recall']:.4f} |",
+            "",
+            "## RAG vs RAG + Rerank",
+            "",
+            f"- Improved cases：{aggregate['rerank_comparison']['improved_cases']}",
+            f"- Same cases：{aggregate['rerank_comparison']['same_cases']}",
+            f"- Worse cases：{aggregate['rerank_comparison']['worse_cases']}",
+            "",
+            "## Case Results",
+            "",
+            "| Case | RAG R@3 | RAG MRR | Rerank R@3 | Rerank MRR | Comparison | Overall |",
+            "| --- | ---: | ---: | ---: | ---: | --- | --- |",
+        ]
     )
+    for case in results["cases"]:
+        lines.append(
+            f"| {case['case_name']} | {case['rag_metrics']['recall_at_k']['3']:.4f} | "
+            f"{case['rag_metrics']['mrr']:.4f} | "
+            f"{case['rerank_metrics']['recall_at_k']['3']:.4f} | "
+            f"{case['rerank_metrics']['mrr']:.4f} | "
+            f"{case['rerank_comparison']['status']} | "
+            f"{'PASS' if case['overall_passed'] else 'FAIL'} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 评测边界",
+            "",
+            "当前评测使用少量脱敏样例，并以 section + keywords 作为简化 gold evidence。",
+            "它主要衡量检索排序和工程链路，不是逐 chunk 人工标注的工业评测，",
+            "也不代表 mock LLM 或真实 Gemini 的最终回答质量。",
+            "",
+        ]
+    )
+    output_path.write_text("\n".join(lines), encoding="utf-8")
     return str(output_path.resolve())
 
 
@@ -245,22 +375,26 @@ def run_evaluations(
     results_dir: str | Path = DEFAULT_RESULTS_DIR,
     top_k: int = 5,
 ) -> tuple[dict[str, Any], str]:
-    """Evaluate all discovered cases and persist an aggregate result."""
     case_paths = discover_eval_cases(cases_dir)
     case_results = [evaluate_case(load_eval_case(path), top_k=top_k) for path in case_paths]
     passed_cases = sum(1 for result in case_results if result["overall_passed"])
     total_cases = len(case_results)
-    failed_cases = total_cases - passed_cases
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     results = {
         "run_time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "llm_mode": "mock",
+        "embedding_providers": EVAL_EMBEDDING_PROVIDERS,
         "total_cases": total_cases,
         "passed_cases": passed_cases,
-        "failed_cases": failed_cases,
+        "failed_cases": total_cases - passed_cases,
         "pass_rate": round((passed_cases / total_cases * 100), 1) if total_cases else 0.0,
         "cases": case_results,
+        "aggregate_metrics": build_aggregate_metrics(case_results),
     }
-    return results, save_eval_results(results, results_dir)
+    summary_path = save_eval_summary(results, results_dir, timestamp)
+    results["artifacts"] = {"markdown_summary": summary_path}
+    json_path = save_eval_results(results, results_dir, timestamp)
+    return results, json_path
 
 
 def _status(value: bool) -> str:
@@ -276,11 +410,13 @@ def main() -> int:
     for case_result in results["cases"]:
         print(f"\n[{case_result['case_name']}]")
         print(f"* RAG retrieve: {_status(case_result['rag_retrieve_passed'])}")
-        print(f"* Lightweight rerank: {_status(case_result['rerank_passed'])}")
+        print(f"* RAG Recall@3: {case_result['rag_metrics']['recall_at_k']['3']:.2f}")
+        print(f"* RAG MRR: {case_result['rag_metrics']['mrr']:.2f}")
+        print(f"* RAG+Rerank Recall@3: {case_result['rerank_metrics']['recall_at_k']['3']:.2f}")
+        print(f"* RAG+Rerank MRR: {case_result['rerank_metrics']['mrr']:.2f}")
+        print(f"* Rerank comparison: {case_result['rerank_comparison']['status']}")
         print(f"* Agent workflow: {_status(case_result['agent_workflow_passed'])}")
-        print(f"* Non-RAG workflow: {_status(case_result['non_rag_workflow_passed'])}")
         print(f"* Trace generated: {_status(case_result['trace_passed'])}")
-        print(f"* Required headings: {case_result['required_headings_status']}")
         print(f"* Overall: {_status(case_result['overall_passed'])}")
         for error in case_result["errors"]:
             print(f"  Error: {error}")
@@ -290,8 +426,16 @@ def main() -> int:
     print(f"Passed: {results['passed_cases']}")
     print(f"Failed: {results['failed_cases']}")
     print(f"Pass rate: {results['pass_rate']:.1f}%")
-    print(f"LLM mode: {results['llm_mode']}")
-    print(f"Result saved: {output_path}")
+    print(f"Embedding providers: {', '.join(results['embedding_providers'])}")
+    if results.get("aggregate_metrics"):
+        rag = results["aggregate_metrics"]["rag"]
+        rerank = results["aggregate_metrics"]["rerank"]
+        print(f"Average RAG Recall@3: {rag['average_recall_at_k']['3']:.2f}")
+        print(f"Average RAG MRR: {rag['average_mrr']:.2f}")
+        print(f"Average RAG+Rerank Recall@3: {rerank['average_recall_at_k']['3']:.2f}")
+        print(f"Average RAG+Rerank MRR: {rerank['average_mrr']:.2f}")
+    print(f"JSON result saved: {output_path}")
+    print(f"Markdown summary saved: {results['artifacts']['markdown_summary']}")
     return 0 if results["failed_cases"] == 0 and results["total_cases"] > 0 else 1
 
 

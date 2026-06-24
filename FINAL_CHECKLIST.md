@@ -9,11 +9,15 @@
 - [ ] `http://127.0.0.1:8000/docs` 可以打开。
 - [ ] `.\.venv\Scripts\python.exe simple_test.py` 通过。
 - [ ] `.\.venv\Scripts\python.exe eval_runner.py` 通过。
+- [ ] Eval Runner 生成 `eval_result_<timestamp>.json`。
+- [ ] Eval Runner 生成 `eval_summary_<timestamp>.md`。
+- [ ] 控制台和结果中可以看到 Recall@K / MRR。
+- [ ] 可以看到普通 RAG 与 RAG + Rerank 的 improved / same / worse 对比。
 - [ ] API 启动后，`.\.venv\Scripts\python.exe api_smoke_test.py` 通过。
 - [ ] 下列语法检查通过：
 
 ```powershell
-.\.venv\Scripts\python.exe -m py_compile app.py agent.py agent_workflow.py tools.py trace_utils.py rerank_utils.py simple_test.py eval_runner.py api_server.py api_smoke_test.py
+.\.venv\Scripts\python.exe -m py_compile app.py agent.py agent_workflow.py tools.py trace_utils.py rerank_utils.py rag_eval_utils.py simple_test.py eval_runner.py api_server.py api_smoke_test.py
 ```
 
 ## Demo 展示检查

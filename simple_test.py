@@ -8,6 +8,7 @@ from agent_workflow import run_resume_agent_workflow
 from api_server import AgentWorkflowRequest, MarkdownReportRequest, RagRetrieveRequest, app as api_app
 from eval_runner import discover_eval_cases, load_eval_case, run_evaluations
 from rag import build_chunk_records, detect_resume_sections, get_local_embedding, split_text
+from rag_eval_utils import evaluate_retrieval_result
 from rerank_utils import extract_keywords, rerank_chunks
 from tools import ToolResult, rag_retrieve_tool
 from trace_utils import TraceStep, WorkflowTrace, create_run_id, now_iso, trace_to_dict
@@ -287,6 +288,10 @@ def test_eval_cases_and_runner_imports() -> None:
         loaded_case = load_eval_case(case_path)
         assert_true(bool(loaded_case["resume_text"]), f"{case_path.name} resume.txt 不应该为空")
         assert_true(bool(loaded_case["job_description"]), f"{case_path.name} jd.txt 不应该为空")
+        assert_true(
+            bool(loaded_case["expected"].get("gold_evidence")),
+            f"{case_path.name} expected.json 应该包含 gold_evidence",
+        )
 
     assert_true(callable(run_evaluations), "eval_runner.run_evaluations 应该可以被 import")
 
@@ -398,6 +403,31 @@ def test_final_hardening_documents() -> None:
         assert_true(relative_path in readme_text, f"README.md 应该链接 {relative_path}")
 
 
+def test_rag_evaluation_metrics() -> None:
+    expected = {
+        "expected_sections": ["skills", "project_experience"],
+        "expected_keywords": ["Python", "RAG", "Agent"],
+        "gold_evidence": [
+            {"section": "skills", "keywords": ["Python", "RAG"]},
+            {"section": "project_experience", "keywords": ["Agent"]},
+        ],
+    }
+    empty_metrics = evaluate_retrieval_result([], expected)
+    assert_true(empty_metrics["recall_at_k"]["3"] == 0.0, "空召回 Recall@3 应为 0")
+    assert_true(empty_metrics["mrr"] == 0.0, "空召回 MRR 应为 0")
+
+    chunks = [
+        {"text": "个人基本信息", "section": "basic_info"},
+        {"content": "Python 与 RAG 技能", "section": "skills"},
+        {"document": "Agent 项目经验", "metadata": {"section": "project_experience"}},
+    ]
+    metrics = evaluate_retrieval_result(chunks, expected)
+    assert_true("recall_at_k" in metrics, "RAG 指标应该包含 recall_at_k")
+    assert_true(metrics["recall_at_k"]["1"] == 0.0, "第一条无关时 Recall@1 应为 0")
+    assert_true(metrics["recall_at_k"]["3"] == 1.0, "前三条应命中全部 gold evidence")
+    assert_true(metrics["mrr"] == 0.5, "首个 evidence 在 rank 2 时 MRR 应为 0.5")
+
+
 if __name__ == "__main__":
     test_split_text()
     test_chunk_metadata()
@@ -419,4 +449,5 @@ if __name__ == "__main__":
     test_rag_tool_and_agent_workflow_with_rerank()
     test_fastapi_files_and_request_models()
     test_final_hardening_documents()
+    test_rag_evaluation_metrics()
     print("simple_test.py: all tests passed")

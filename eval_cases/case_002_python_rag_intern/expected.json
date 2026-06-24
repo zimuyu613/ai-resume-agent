@@ -1,5 +1,19 @@
 {
   "expected_sections": ["skills", "project_experience", "education"],
   "expected_keywords": ["Python", "RAG", "LLM", "ChromaDB"],
-  "required_output_headings": ["岗位要求分析", "能力匹配", "差距", "优化建议"]
+  "required_output_headings": ["岗位要求分析", "能力匹配", "差距", "优化建议"],
+  "gold_evidence": [
+    {
+      "section": "skills",
+      "keywords": ["Python", "RAG", "ChromaDB"]
+    },
+    {
+      "section": "project_experience",
+      "keywords": ["校园资料问答助手", "向量数据库", "大模型"]
+    },
+    {
+      "section": "education",
+      "keywords": ["计算机", "数据库", "软件工程"]
+    }
+  ]
 }

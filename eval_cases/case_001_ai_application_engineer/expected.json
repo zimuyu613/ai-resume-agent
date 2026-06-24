@@ -1,5 +1,15 @@
 {
   "expected_sections": ["skills", "project_experience"],
   "expected_keywords": ["Python", "RAG", "LLM", "Agent"],
-  "required_output_headings": ["岗位要求分析", "能力匹配", "差距", "优化建议"]
+  "required_output_headings": ["岗位要求分析", "能力匹配", "差距", "优化建议"],
+  "gold_evidence": [
+    {
+      "section": "skills",
+      "keywords": ["Python", "RAG", "ChromaDB"]
+    },
+    {
+      "section": "project_experience",
+      "keywords": ["AI Resume Agent", "embedding", "Agent"]
+    }
+  ]
 }

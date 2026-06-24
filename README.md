@@ -195,18 +195,21 @@ Agent Workflow 每次运行都会生成 `run_id`，记录输入长度、top_k、
 
 这是教学和面试展示级的轻量观测实现，不等同于 LangSmith 或 OpenTelemetry。
 
-## Eval Runner
+## RAG Evaluation System MVP
 
-`eval_cases/` 保存可提交的脱敏简历、岗位 JD 和 `expected.json`。`eval_runner.py` 检查：
+`eval_cases/` 保存可提交的脱敏简历、岗位 JD 和 `expected.json`。每个 case 使用 expected sections、expected keywords，以及由 section + keywords 组成的简化 gold evidence。
 
-- RAG 是否成功召回片段。
-- 召回结果是否覆盖预期 section 和关键词。
-- Agent Workflow 是否返回分析结果和步骤。
-- Trace 是否包含 run_id 和步骤记录。
-- 非 RAG 路径是否正确记录跳过 RAG。
-- 输出是否包含预期标题或关键词。
+`eval_runner.py` 计算并对比普通 RAG 与 RAG + Rerank：
 
-为了可复现并避免依赖 API 配额，Eval Runner 默认使用 local embedding 和确定性 mock LLM，结果中会标记 `llm_mode: "mock"`。它验证工程链路稳定性，不代表真实模型输出质量。
+- Recall@1 / Recall@3 / Recall@5。
+- MRR（第一个相关片段排名的倒数）。
+- section hit rate、keyword hit rate 和 gold recall。
+- Rerank 的 improved / same / worse 对比。
+- 原有 Agent Workflow、Trace 和输出结构检查。
+
+运行 `.\.venv\Scripts\python.exe eval_runner.py` 后，JSON 与 Markdown summary 会保存到 `eval_results/`。默认只评测 local embedding，后续可以扩展 provider 对比。
+
+为了可复现并避免依赖 API 配额，Eval Runner 使用确定性 mock LLM。当前 gold evidence 不是人工逐 chunk 严格标注，样例数量也较少，因此这是教学和面试展示级 RAG 评测 MVP，主要验证检索与工程链路，不代表真实模型最终答案质量。详细说明见 [Eval 文档](docs/eval.md)。
 
 ## 示例产物
 
@@ -229,6 +232,7 @@ resume-agent/
 ├─ agent_workflow.py       # 固定 Tool Calling Workflow 与 Trace 接入
 ├─ trace_utils.py          # Trace dataclass、摘要、序列化与 JSON 保存
 ├─ eval_runner.py          # 工程型基础评测入口
+├─ rag_eval_utils.py       # Recall@K、MRR 和 gold evidence 评测工具
 ├─ api_server.py           # FastAPI health、RAG、Agent、Markdown 接口
 ├─ api_smoke_test.py       # 已启动 API 的四接口 smoke test
 ├─ simple_test.py          # 快速、无真实 LLM 依赖的基础测试
@@ -276,7 +280,7 @@ resume-agent/
 - 在数据规模和质量要求提升后评估 cross-encoder reranker。
 - 将 FastAPI MVP 升级为带统一错误码、超时和配置管理的服务层。
 - 支持更多 LLM 和 embedding provider。
-- 扩充 Eval 数据、检索指标和真实模型质量评测。
+- 扩充人工相关性标注、nDCG 和真实模型答案质量评测。
 - 在需求复杂度确实提升后评估 LangChain / LangGraph。
 - 增加更完整的 Agent 规划、工具选择和状态管理能力。
 
