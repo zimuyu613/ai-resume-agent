@@ -42,6 +42,10 @@ class WorkflowTrace:
     llm_provider: str | None = None
     llm_model: str | None = None
     use_mock_llm: bool = False
+    fallback_to_mock: bool = True
+    fallback_used: bool | None = None
+    original_provider: str | None = None
+    provider_error: str | None = None
     steps: list[TraceStep] = field(default_factory=list)
     final_status: str = "running"
     error: str | None = None

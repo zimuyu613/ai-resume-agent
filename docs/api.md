@@ -49,6 +49,33 @@ Swagger UI：`http://127.0.0.1:8000/docs`
 
 **当前限制**：只反映进程可用，不检查 Gemini、ChromaDB 或磁盘状态。
 
+## GET `/api/llm/health`
+
+**用途**：检查指定 LLM Provider 的配置和轻量可用性。
+
+**查询参数**：`provider`、`model`、`use_mock` 均可选。
+
+```text
+GET /api/llm/health?provider=mock&use_mock=true
+```
+
+**返回示例**：
+
+```json
+{
+  "provider": "mock",
+  "model": "mock-structured-v1",
+  "available": true,
+  "message": "Mock Provider 可用，不依赖外部服务。",
+  "latency_ms": 0.02,
+  "error": null
+}
+```
+
+**真实 LLM 依赖**：Mock 无依赖；真实 provider 配置完整时会发送短 Prompt。
+
+**当前限制**：这是单次轻量检查，不是持续监控、SLA 探测或熔断器。
+
 ## POST `/api/rag/retrieve`
 
 **用途**：从简历中召回与岗位 JD 相关的片段，可选轻量 Rerank。
@@ -103,6 +130,7 @@ Swagger UI：`http://127.0.0.1:8000/docs`
   "use_rerank": true,
   "llm_provider": "openai_compatible",
   "llm_model": "deepseek-chat",
+  "fallback_to_mock": true,
   "use_mock_llm": false
 }
 ```
@@ -119,11 +147,16 @@ Swagger UI：`http://127.0.0.1:8000/docs`
   "llm_mode": "openai_compatible",
   "llm_provider": "openai_compatible",
   "llm_model": "deepseek-chat",
+  "fallback_used": false,
+  "original_provider": null,
+  "provider_error": null,
   "error": null
 }
 ```
 
 **Provider 参数**：`llm_provider` 支持 `gemini`、`openai_compatible`、`mock`；`llm_model` 可覆盖环境默认模型。没有传 provider 时，后端读取 `.env` 的 `LLM_PROVIDER`。`use_mock_llm=true` 的优先级最高。
+
+`fallback_to_mock` 默认是 `true`。真实 provider 失败后，返回的 `llm_provider` 会是 `mock`，并通过 `fallback_used`、`original_provider` 和 `provider_error` 说明降级原因。
 
 **真实 LLM 依赖**：Gemini 和 OpenAI-compatible 模式依赖对应 Key。设置 `use_mock_llm=true` 或 `llm_provider="mock"` 时使用确定性 mock，仅用于 smoke test 和接口链路验证。
 

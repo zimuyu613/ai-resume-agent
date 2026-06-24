@@ -34,6 +34,16 @@ def main() -> int:
             raise RuntimeError("/docs did not return the Swagger UI page")
         print("GET /docs: PASS")
 
+        llm_health = requests.get(
+            f"{BASE_URL}/api/llm/health",
+            params={"provider": "mock", "use_mock": True},
+            timeout=TIMEOUT_SECONDS,
+        )
+        llm_health.raise_for_status()
+        if llm_health.json().get("available") is not True:
+            raise RuntimeError("mock LLM health check did not return available=true")
+        print("GET /api/llm/health?provider=mock: PASS")
+
         _check_response(
             "POST /api/rag/retrieve",
             requests.post(
@@ -60,6 +70,7 @@ def main() -> int:
                     "use_rerank": True,
                     "llm_provider": "mock",
                     "use_mock_llm": True,
+                    "fallback_to_mock": True,
                 },
                 timeout=TIMEOUT_SECONDS,
             ),

@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from typing import Any
 
 from fastapi import FastAPI
@@ -6,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from agent_workflow import run_resume_agent_workflow
+from llm_provider import check_llm_provider_health
 from tools import export_markdown_tool, rag_retrieve_tool
 
 
@@ -42,6 +44,7 @@ class AgentWorkflowRequest(BaseModel):
     llm_provider: str | None = None
     llm_model: str | None = None
     use_mock_llm: bool = False
+    fallback_to_mock: bool = True
 
     @field_validator("resume_text", "job_description")
     @classmethod
@@ -86,6 +89,21 @@ def health_check() -> dict[str, str]:
     }
 
 
+@app.get("/api/llm/health")
+def llm_health_check(
+    provider: str | None = None,
+    model: str | None = None,
+    use_mock: bool = False,
+) -> dict[str, Any]:
+    return asdict(
+        check_llm_provider_health(
+            provider=provider,
+            model=model,
+            use_mock=use_mock,
+        )
+    )
+
+
 @app.post("/api/rag/retrieve")
 def retrieve_rag(request: RagRetrieveRequest) -> dict[str, Any]:
     try:
@@ -124,6 +142,7 @@ def run_agent(request: AgentWorkflowRequest) -> dict[str, Any]:
             llm_provider=request.llm_provider,
             llm_model=request.llm_model,
             use_mock_llm=request.use_mock_llm,
+            fallback_to_mock=request.fallback_to_mock,
         )
         return {
             "success": result.get("success", False),
@@ -134,6 +153,9 @@ def run_agent(request: AgentWorkflowRequest) -> dict[str, Any]:
             "llm_mode": "mock" if request.use_mock_llm else result.get("llm_provider"),
             "llm_provider": result.get("llm_provider"),
             "llm_model": result.get("llm_model"),
+            "fallback_used": result.get("fallback_used", False),
+            "original_provider": result.get("original_provider"),
+            "provider_error": result.get("provider_error"),
             "error": result.get("error"),
         }
     except Exception as exc:
@@ -146,6 +168,9 @@ def run_agent(request: AgentWorkflowRequest) -> dict[str, Any]:
             "llm_mode": "mock" if request.use_mock_llm else request.llm_provider,
             "llm_provider": "mock" if request.use_mock_llm else request.llm_provider,
             "llm_model": request.llm_model,
+            "fallback_used": False,
+            "original_provider": request.llm_provider,
+            "provider_error": str(exc),
             "error": f"Agent Workflow failed: {exc}",
         }
 

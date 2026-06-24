@@ -14,6 +14,11 @@
 - [ ] 控制台和结果中可以看到 Recall@K / MRR。
 - [ ] 可以看到普通 RAG 与 RAG + Rerank 的 improved / same / worse 对比。
 - [ ] API 启动后，`.\.venv\Scripts\python.exe api_smoke_test.py` 通过。
+- [ ] LLM Provider 健康检查可以执行。
+- [ ] Mock Provider 显示可用。
+- [ ] 缺少真实 Provider Key 时显示友好提示。
+- [ ] `fallback_to_mock` 可以完成降级流程。
+- [ ] Trace 中可以看到 fallback、original provider 和 provider error。
 - [ ] 下列语法检查通过：
 
 ```powershell

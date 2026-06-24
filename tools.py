@@ -192,6 +192,7 @@ def llm_match_analysis_tool(
     llm_provider: str | None = None,
     llm_model: str | None = None,
     use_mock_llm: bool = False,
+    fallback_to_mock: bool = True,
 ) -> ToolResult:
     """Run normal LLM analysis or RAG-grounded LLM analysis."""
     tool_name = "llm_match_analysis_tool"
@@ -228,6 +229,7 @@ def llm_match_analysis_tool(
                 provider=llm_provider,
                 model=llm_model,
                 use_mock=use_mock_llm,
+                fallback_to_mock=fallback_to_mock,
             )
             if not llm_result.success:
                 return ToolResult(
@@ -238,6 +240,10 @@ def llm_match_analysis_tool(
                         "llm_provider": llm_result.provider,
                         "llm_model": llm_result.model,
                         "use_mock_llm": use_mock_llm,
+                        "fallback_to_mock": fallback_to_mock,
+                        "fallback_used": llm_result.fallback_used,
+                        "original_provider": llm_result.original_provider,
+                        "provider_error": llm_result.error,
                     },
                     error=llm_result.error,
                 )
@@ -257,6 +263,10 @@ def llm_match_analysis_tool(
                 "llm_provider": provider_used,
                 "llm_model": model_used,
                 "use_mock_llm": use_mock_llm or llm_callable is not None,
+                "fallback_to_mock": fallback_to_mock,
+                "fallback_used": False if llm_callable else llm_result.fallback_used,
+                "original_provider": None if llm_callable else llm_result.original_provider,
+                "provider_error": None if llm_callable else llm_result.error,
             },
         )
     except Exception as exc:

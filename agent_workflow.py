@@ -149,6 +149,10 @@ def _base_result(
         "llm_provider": trace.llm_provider,
         "llm_model": trace.llm_model,
         "use_mock_llm": trace.use_mock_llm,
+        "fallback_to_mock": trace.fallback_to_mock,
+        "fallback_used": trace.fallback_used,
+        "original_provider": trace.original_provider,
+        "provider_error": trace.provider_error,
     }
 
 
@@ -164,6 +168,7 @@ def run_resume_agent_workflow(
     llm_provider: str | None = None,
     llm_model: str | None = None,
     use_mock_llm: bool = False,
+    fallback_to_mock: bool = True,
 ) -> dict[str, Any]:
     """Run the fixed tool chain and return analysis plus a lightweight trace."""
     workflow_started = perf_counter()
@@ -191,6 +196,7 @@ def run_resume_agent_workflow(
         llm_provider=resolved_llm_provider,
         llm_model=llm_model,
         use_mock_llm=effective_use_mock,
+        fallback_to_mock=fallback_to_mock,
     )
     retrieved_chunks: list[dict[str, Any]] = []
     retrieval_data: dict[str, Any] = {}
@@ -265,6 +271,7 @@ def run_resume_agent_workflow(
             "llm_provider": resolved_llm_provider,
             "llm_model": llm_model,
             "use_mock_llm": effective_use_mock,
+            "fallback_to_mock": fallback_to_mock,
         },
         tool_call=lambda: llm_match_analysis_tool(
             resume_text=resume_text,
@@ -275,6 +282,7 @@ def run_resume_agent_workflow(
             llm_provider=llm_provider,
             llm_model=llm_model,
             use_mock_llm=effective_use_mock,
+            fallback_to_mock=fallback_to_mock,
         ),
         output_builder=lambda result: {
             "analysis_length": len(result.data.get("full_report", "")),
@@ -283,12 +291,20 @@ def run_resume_agent_workflow(
             "llm_provider": result.data.get("llm_provider"),
             "llm_model": result.data.get("llm_model"),
             "use_mock_llm": result.data.get("use_mock_llm", False),
+            "fallback_to_mock": result.data.get("fallback_to_mock", True),
+            "fallback_used": result.data.get("fallback_used", False),
+            "original_provider": result.data.get("original_provider"),
+            "provider_error": result.data.get("provider_error"),
         },
     )
     trace.steps.append(llm_step)
     trace.llm_provider = llm_result.data.get("llm_provider", trace.llm_provider)
     trace.llm_model = llm_result.data.get("llm_model", trace.llm_model)
     trace.use_mock_llm = llm_result.data.get("use_mock_llm", trace.use_mock_llm)
+    trace.fallback_to_mock = llm_result.data.get("fallback_to_mock", trace.fallback_to_mock)
+    trace.fallback_used = llm_result.data.get("fallback_used", False)
+    trace.original_provider = llm_result.data.get("original_provider")
+    trace.provider_error = llm_result.data.get("provider_error")
 
     if not llm_result.success:
         message = f"Agent Workflow stopped at LLM analysis: {llm_result.error}"

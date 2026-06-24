@@ -16,6 +16,7 @@ def _call_api(
     base_url: str,
     path: str,
     payload: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     base_url = _normalize_base_url(base_url)
@@ -27,6 +28,7 @@ def _call_api(
             method=method,
             url=f"{base_url}{path}",
             json=payload,
+            params=params,
             timeout=timeout,
         )
     except requests.ConnectionError:
@@ -71,6 +73,21 @@ def check_api_health(base_url: str) -> dict[str, Any]:
     return _call_api("GET", base_url, "/api/health", timeout=10)
 
 
+def check_llm_health_api(
+    base_url: str,
+    provider: str | None = None,
+    model: str | None = None,
+    use_mock: bool = False,
+) -> dict[str, Any]:
+    return _call_api(
+        "GET",
+        base_url,
+        "/api/llm/health",
+        params={"provider": provider, "model": model, "use_mock": use_mock},
+        timeout=15,
+    )
+
+
 def call_rag_retrieve_api(
     base_url: str,
     resume_text: str,
@@ -101,6 +118,7 @@ def call_agent_workflow_api(
     llm_provider: str | None = None,
     llm_model: str | None = None,
     use_mock_llm: bool = False,
+    fallback_to_mock: bool = True,
 ) -> dict[str, Any]:
     return _call_api(
         "POST",
@@ -115,6 +133,7 @@ def call_agent_workflow_api(
             "llm_provider": llm_provider,
             "llm_model": llm_model,
             "use_mock_llm": use_mock_llm,
+            "fallback_to_mock": fallback_to_mock,
         },
         timeout=AGENT_TIMEOUT_SECONDS,
     )

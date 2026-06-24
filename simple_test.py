@@ -13,7 +13,12 @@ from api_client import (
 )
 from api_server import AgentWorkflowRequest, MarkdownReportRequest, RagRetrieveRequest, app as api_app
 from eval_runner import discover_eval_cases, load_eval_case, run_evaluations
-from llm_provider import LLMResult, generate_with_llm
+from llm_provider import (
+    LLMResult,
+    ProviderHealthResult,
+    check_llm_provider_health,
+    generate_with_llm,
+)
 from rag import build_chunk_records, detect_resume_sections, get_local_embedding, split_text
 from rag_eval_utils import evaluate_retrieval_result
 from rerank_utils import extract_keywords, rerank_chunks
@@ -463,17 +468,59 @@ def test_multi_model_provider_offline_paths() -> None:
     assert_true(mock_result.provider == "mock", "mock LLM 应记录 provider=mock")
     assert_true("岗位要求分析" in mock_result.text, "mock LLM 应返回稳定结构")
 
+    health_record = ProviderHealthResult(
+        provider="mock",
+        model="mock-structured-v1",
+        available=True,
+        message="ok",
+    )
+    assert_true(health_record.available, "ProviderHealthResult 应该可以创建")
+    mock_health = check_llm_provider_health(provider="mock")
+    assert_true(mock_health.available, "Mock Provider 健康检查应该通过")
+
     original_key = os.environ.pop("OPENAI_COMPATIBLE_API_KEY", None)
+    original_url = os.environ.pop("OPENAI_COMPATIBLE_BASE_URL", None)
     try:
+        missing_health = check_llm_provider_health(provider="openai_compatible")
         missing_key_result = generate_with_llm(
             "测试 Prompt",
             provider="openai_compatible",
+            fallback_to_mock=False,
+        )
+        fallback_result = generate_with_llm(
+            "测试 Prompt",
+            provider="openai_compatible",
+            fallback_to_mock=True,
+        )
+        fallback_workflow = run_resume_agent_workflow(
+            resume_text="Python RAG 项目",
+            job_description="AI 应用开发岗位",
+            use_rag=False,
+            llm_provider="openai_compatible",
+            fallback_to_mock=True,
         )
     finally:
         if original_key is not None:
             os.environ["OPENAI_COMPATIBLE_API_KEY"] = original_key
+        if original_url is not None:
+            os.environ["OPENAI_COMPATIBLE_BASE_URL"] = original_url
+    assert_true(missing_health.available is False, "缺少兼容配置时健康检查应失败")
     assert_true(missing_key_result.success is False, "缺少兼容 API Key 时应该友好失败")
-    assert_true("OPENAI_COMPATIBLE_API_KEY" in missing_key_result.error, "错误应指出缺少 API Key")
+    assert_true("API Key" in missing_key_result.error, "错误应指出缺少 API Key")
+    assert_true(fallback_result.success, "启用 fallback 后应该返回 Mock 结果")
+    assert_true(fallback_result.provider == "mock", "fallback provider 应该为 mock")
+    assert_true(fallback_result.fallback_used, "fallback 结果应该记录 fallback_used")
+    assert_true(
+        fallback_result.original_provider == "openai_compatible",
+        "fallback 结果应该记录 original_provider",
+    )
+    assert_true(fallback_workflow["success"], "fallback Agent Workflow 应该成功")
+    assert_true(fallback_workflow["trace"]["fallback_used"] is True, "Trace 应记录 fallback_used")
+    assert_true(
+        fallback_workflow["trace"]["original_provider"] == "openai_compatible",
+        "Trace 应记录 original_provider",
+    )
+    assert_true(bool(fallback_workflow["trace"]["provider_error"]), "Trace 应记录 provider_error")
 
     workflow = run_resume_agent_workflow(
         resume_text="Python RAG 项目",

@@ -10,10 +10,11 @@ from api_client import (
     call_agent_workflow_api,
     call_rag_retrieve_api,
     check_api_health,
+    check_llm_health_api,
 )
 from agent_workflow import run_resume_agent_workflow
 from agent import extract_section, run_agent_workflow, run_rag_workflow
-from llm_provider import get_llm_provider_from_env
+from llm_provider import check_llm_provider_health, get_llm_provider_from_env
 from rag import get_embedding_provider
 from tools import llm_match_analysis_tool
 
@@ -98,6 +99,10 @@ def _agent_api_result(api_result: dict, top_k: int, use_rag: bool) -> dict:
         "llm_provider": data.get("llm_provider") or trace.get("llm_provider"),
         "llm_model": data.get("llm_model") or trace.get("llm_model"),
         "use_mock_llm": trace.get("use_mock_llm", False),
+        "fallback_to_mock": trace.get("fallback_to_mock", True),
+        "fallback_used": data.get("fallback_used", trace.get("fallback_used", False)),
+        "original_provider": data.get("original_provider") or trace.get("original_provider"),
+        "provider_error": data.get("provider_error") or trace.get("provider_error"),
         "api_mode": True,
         "api_used_rag": use_rag,
     }
@@ -111,6 +116,7 @@ def _run_api_rag_analysis(
     use_rerank: bool,
     llm_provider: str,
     llm_model: str | None = None,
+    fallback_to_mock: bool = True,
 ) -> dict:
     retrieval_call = call_rag_retrieve_api(
         base_url=base_url,
@@ -135,6 +141,7 @@ def _run_api_rag_analysis(
         llm_provider=llm_provider,
         llm_model=llm_model,
         use_mock_llm=llm_provider == "mock",
+        fallback_to_mock=fallback_to_mock,
     )
     if not llm_result.success:
         return _analysis_error_result(llm_result.error or "本地 LLM 分析失败。")
@@ -263,6 +270,10 @@ def render_agent_trace(result: dict) -> None:
             "llm_provider": trace.get("llm_provider"),
             "llm_model": trace.get("llm_model"),
             "use_mock_llm": trace.get("use_mock_llm"),
+            "fallback_to_mock": trace.get("fallback_to_mock"),
+            "fallback_used": trace.get("fallback_used"),
+            "original_provider": trace.get("original_provider"),
+            "provider_error": trace.get("provider_error"),
         }
     )
 
@@ -424,6 +435,7 @@ def render_analysis_page() -> None:
         "selected_llm_provider",
         get_llm_provider_from_env(),
     )
+    fallback_to_mock = st.session_state.get("fallback_to_mock", True)
     st.caption(f"当前运行后端模式：{backend_mode}")
     st.caption(f"当前 LLM Provider：{selected_llm_provider}")
 
@@ -531,6 +543,7 @@ def render_analysis_page() -> None:
                                 use_rerank=use_rerank,
                                 llm_provider=selected_llm_provider,
                                 use_mock_llm=selected_llm_provider == "mock",
+                                fallback_to_mock=fallback_to_mock,
                             ),
                             top_k=rag_top_k,
                             use_rag=True,
@@ -543,6 +556,7 @@ def render_analysis_page() -> None:
                             top_k=rag_top_k,
                             use_rerank=use_rerank,
                             llm_provider=selected_llm_provider,
+                            fallback_to_mock=fallback_to_mock,
                         )
                     else:
                         result = _agent_api_result(
@@ -555,6 +569,7 @@ def render_analysis_page() -> None:
                                 use_rerank=False,
                                 llm_provider=selected_llm_provider,
                                 use_mock_llm=selected_llm_provider == "mock",
+                                fallback_to_mock=fallback_to_mock,
                             ),
                             top_k=rag_top_k,
                             use_rag=False,
@@ -571,6 +586,7 @@ def render_analysis_page() -> None:
                             use_rerank=use_rerank,
                             llm_provider=selected_llm_provider,
                             use_mock_llm=selected_llm_provider == "mock",
+                            fallback_to_mock=fallback_to_mock,
                         )
                     elif rag_enabled:
                         result = run_rag_workflow(
@@ -582,6 +598,7 @@ def render_analysis_page() -> None:
                             use_rerank=use_rerank,
                             llm_provider=selected_llm_provider,
                             use_mock_llm=selected_llm_provider == "mock",
+                            fallback_to_mock=fallback_to_mock,
                         )
                     else:
                         result = run_agent_workflow(
@@ -589,6 +606,7 @@ def render_analysis_page() -> None:
                             final_resume_text,
                             llm_provider=selected_llm_provider,
                             use_mock_llm=selected_llm_provider == "mock",
+                            fallback_to_mock=fallback_to_mock,
                         )
 
             # 保存本次分析结果，避免点击下载按钮或切换 RAG 片段预览时页面 rerun 后结果消失。
@@ -609,6 +627,11 @@ def render_analysis_page() -> None:
                 f"LLM：{result.get('llm_provider', selected_llm_provider)}"
                 f" / {result.get('llm_model') or 'default model'}"
             )
+            if result.get("fallback_used"):
+                st.warning(
+                    f"真实 Provider {result.get('original_provider')} 调用失败，已 fallback 到 Mock。"
+                    f"错误摘要：{result.get('provider_error') or '未返回'}"
+                )
             if result.get("api_hybrid_mode"):
                 st.info("RAG retrieve API 已完成；当前 API 尚无独立 RAG 分析接口，LLM 分析仍走本地逻辑。")
             if result_agent_workflow_enabled and result.get("workflow_steps"):
@@ -866,6 +889,49 @@ with st.sidebar:
         )
     elif selected_llm_provider == "mock":
         st.warning("当前使用 mock LLM，只用于测试流程，不代表真实模型质量。")
+
+    if st.button("检查 LLM Provider", key="check_llm_provider"):
+        if backend_mode == API_BACKEND_MODE:
+            health_call = check_llm_health_api(
+                api_base_url,
+                provider=selected_llm_provider,
+                use_mock=selected_llm_provider == "mock",
+            )
+            if health_call.get("success"):
+                health_data = health_call.get("data") or {}
+            else:
+                health_data = {
+                    "provider": selected_llm_provider,
+                    "available": False,
+                    "message": "Provider 健康检查请求失败。",
+                    "error": health_call.get("error"),
+                }
+        else:
+            health = check_llm_provider_health(
+                provider=selected_llm_provider,
+                use_mock=selected_llm_provider == "mock",
+            )
+            health_data = {
+                "provider": health.provider,
+                "model": health.model,
+                "available": health.available,
+                "latency_ms": health.latency_ms,
+                "message": health.message,
+                "error": health.error,
+            }
+        if health_data.get("available"):
+            st.success(health_data.get("message") or "LLM Provider 可用。")
+        else:
+            st.error(health_data.get("error") or health_data.get("message") or "LLM Provider 不可用。")
+        st.json(health_data)
+
+    if "fallback_to_mock" not in st.session_state:
+        st.session_state["fallback_to_mock"] = True
+    fallback_to_mock = st.checkbox(
+        "模型失败时 fallback 到 Mock",
+        key="fallback_to_mock",
+        help="用于演示和测试稳定性。真实生产环境应根据业务决定是否允许 fallback。",
+    )
 
     st.divider()
     st.caption("AI 应用工程化 MVP / RAG Workflow 原型")

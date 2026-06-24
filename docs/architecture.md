@@ -87,6 +87,24 @@ FastAPI 将核心能力暴露为稳定的 JSON 接口，展示请求模型、参
 
 当前 provider 层不负责自动选模、价格比较、熔断、限流或质量路由；真实模型的 Key、URL 和模型名仍由环境变量管理。
 
+## Provider Health Check 与 Fallback
+
+健康检查位于 `llm_provider.py`：先检查 Key、Base URL 和 provider 名称，配置完整时才使用短 Prompt 发起轻量请求。Mock Provider 不访问网络。
+
+`generate_with_llm` 的调用流程：
+
+```text
+选择 provider
+-> 执行真实模型或 Mock
+-> 成功：返回 LLMResult
+-> 失败且 fallback_to_mock=True：返回 Mock 文本并保留原错误
+-> 失败且 fallback_to_mock=False：返回 success=False
+```
+
+需要区分三个概念：Mock 是显式测试 provider；真实 provider 表示实际外部模型；fallback 是真实 provider 失败后的降级结果。Fallback Trace 会保留 original provider 和 provider error，不能当成真实模型成功。
+
+当前实现是单次调用级 fallback，不包含熔断状态机、流量切换、重试队列、成本策略和集中监控。
+
 ## Local Mode 数据流
 
 ```text

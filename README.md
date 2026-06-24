@@ -224,7 +224,22 @@ API mode 中，普通分析和 Agent Workflow 使用 `/api/agent/workflow`；RAG
 
 普通分析、RAG 分析和 Agent Workflow 不再直接绑定单一模型厂商。Streamlit 侧边栏可选择 provider；API mode 会把 `llm_provider`、`llm_model` 和 `use_mock_llm` 传给后端。未显式传 provider 时，后端读取 `.env` 中的 `LLM_PROVIDER`。
 
-当前实现只是多模型调用 MVP，没有复杂模型路由、成本统计、自动 fallback、熔断、限流或多模型质量评测。显式选择真实 provider 但缺少 Key 时会返回友好错误，不会静默伪装成真实模型结果。
+当前实现只是多模型调用 MVP，没有复杂模型路由、成本统计、熔断、限流或多模型质量评测。真实 provider 失败后的 fallback 会被明确记录，不会静默伪装成真实模型结果。
+
+## Provider Health Check / Fallback MVP
+
+项目提供 LLM Provider 健康检查，可检查 Mock、Gemini 和 OpenAI-compatible 的配置与可用性。Mock 会立即返回可用；真实 provider 缺少 Key 或 Base URL 时只返回友好错误，不会发起外部请求。
+
+模型调用支持超时参数和 `fallback_to_mock`。启用后，如果 Gemini 或 OpenAI-compatible 调用失败，流程会使用 Mock 完成 Demo，同时在结果和 Trace 中记录：
+
+- `fallback_used`
+- `original_provider`
+- `provider_error`
+- 实际 `llm_provider` / `llm_model`
+
+Streamlit 侧边栏可以执行 Provider 健康检查，并可选择“模型失败时 fallback 到 Mock”。该选项默认开启，用于演示和测试稳定性；真实生产环境应根据业务风险决定是否允许 fallback。
+
+当前实现不包含复杂熔断、限流、重试队列、成本统计或生产级监控。Fallback 到 Mock 只代表工程链路可继续运行，不代表真实模型调用成功或回答质量可用。
 
 ## Trace / Observability
 

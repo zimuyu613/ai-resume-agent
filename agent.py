@@ -13,9 +13,10 @@ def call_llm_result(
     model: str | None = None,
     use_mock: bool = False,
     timeout: int = 60,
+    fallback_to_mock: bool = True,
 ) -> LLMResult:
     """Call the unified provider layer while prompt construction stays in agent.py."""
-    return generate_with_llm(prompt, provider, model, use_mock, timeout)
+    return generate_with_llm(prompt, provider, model, use_mock, timeout, fallback_to_mock)
 
 
 def call_llm(
@@ -24,9 +25,10 @@ def call_llm(
     model: str | None = None,
     use_mock: bool = False,
     timeout: int = 60,
+    fallback_to_mock: bool = True,
 ) -> str:
     """Backward-compatible text-only wrapper around the unified provider layer."""
-    result = call_llm_result(prompt, provider, model, use_mock, timeout)
+    result = call_llm_result(prompt, provider, model, use_mock, timeout, fallback_to_mock)
     return result.text if result.success else f"错误：{result.error}"
 
 
@@ -58,6 +60,7 @@ def run_agent_workflow(
     llm_provider: str | None = None,
     llm_model: str | None = None,
     use_mock_llm: bool = False,
+    fallback_to_mock: bool = True,
 ) -> dict:
     """
     单次综合调用版 Agent Workflow：
@@ -83,6 +86,7 @@ def run_agent_workflow(
         provider=llm_provider,
         model=llm_model,
         use_mock=use_mock_llm,
+        fallback_to_mock=fallback_to_mock,
     )
     full_report = llm_result.text if llm_result.success else f"错误：{llm_result.error}"
 
@@ -118,6 +122,10 @@ def run_agent_workflow(
         "full_report": full_report,
         "llm_provider": llm_result.provider,
         "llm_model": llm_result.model,
+        "fallback_to_mock": fallback_to_mock,
+        "fallback_used": llm_result.fallback_used,
+        "original_provider": llm_result.original_provider,
+        "provider_error": llm_result.error,
         "error": None if llm_result.success else llm_result.error,
     }
 
@@ -149,6 +157,7 @@ def run_rag_workflow(
     llm_provider: str | None = None,
     llm_model: str | None = None,
     use_mock_llm: bool = False,
+    fallback_to_mock: bool = True,
 ) -> dict:
     """
     RAG 增强版分析流程：
@@ -201,6 +210,7 @@ def run_rag_workflow(
         provider=llm_provider,
         model=llm_model,
         use_mock=use_mock_llm,
+        fallback_to_mock=fallback_to_mock,
     )
     full_report = llm_result.text if llm_result.success else f"错误：{llm_result.error}"
 
@@ -236,6 +246,10 @@ def run_rag_workflow(
         "full_report": full_report,
         "llm_provider": llm_result.provider,
         "llm_model": llm_result.model,
+        "fallback_to_mock": fallback_to_mock,
+        "fallback_used": llm_result.fallback_used,
+        "original_provider": llm_result.original_provider,
+        "provider_error": llm_result.error,
         "error": None if llm_result.success else llm_result.error,
         "retrieved_context": retrieved_context,
         "retrieved_chunk_count": len(sources),
