@@ -187,6 +187,29 @@ Eval 结果会写入 `eval_results/eval_result_<timestamp>.json`。
 
 Smoke test 会为 Agent 请求显式设置 `use_mock_llm=true`，因此不依赖真实 Gemini API。这个后端仍是 MVP，不包含登录、数据库历史记录、权限系统、异步任务队列、Docker 或生产级部署配置。
 
+## Frontend-Backend Decoupling MVP
+
+Streamlit 页面现在支持两种运行后端模式：
+
+- **本地函数模式（默认）**：页面直接调用 Python 业务函数，适合本地快速演示，也保留原有稳定路径。
+- **FastAPI 接口模式**：页面通过 `api_client.py` 请求 FastAPI，展示前端展示层与后端接口层的初步解耦。
+
+API mode 中，普通分析和 Agent Workflow 使用 `/api/agent/workflow`；RAG 模式使用 `/api/rag/retrieve` 获取片段。由于当前后端没有单独的“RAG 片段 + LLM 报告”接口，RAG API mode 的 LLM 分析仍在 Streamlit 进程本地执行，页面会明确提示这一边界。
+
+启动后端：
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn api_server:app --reload --host 127.0.0.1 --port 8000
+```
+
+启动 Streamlit：
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run app.py
+```
+
+当前 Streamlit 仍是 Demo UI，不是 React/Vue 等独立前端工程，因此这是前后端分离雏形，而非完整前后端架构。
+
 ## Trace / Observability
 
 Agent Workflow 每次运行都会生成 `run_id`，记录输入长度、top_k、embedding provider、是否 fallback、总耗时、最终状态以及每个工具步骤的输入输出摘要、耗时和错误。
@@ -234,6 +257,7 @@ resume-agent/
 ├─ eval_runner.py          # 工程型基础评测入口
 ├─ rag_eval_utils.py       # Recall@K、MRR 和 gold evidence 评测工具
 ├─ api_server.py           # FastAPI health、RAG、Agent、Markdown 接口
+├─ api_client.py           # Streamlit 调用 FastAPI 的统一 HTTP Client
 ├─ api_smoke_test.py       # 已启动 API 的四接口 smoke test
 ├─ simple_test.py          # 快速、无真实 LLM 依赖的基础测试
 ├─ eval_cases/             # 可提交的脱敏 Eval 样例

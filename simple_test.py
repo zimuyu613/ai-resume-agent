@@ -5,6 +5,12 @@ from pathlib import Path
 os.environ["EMBEDDING_PROVIDER"] = "local"
 
 from agent_workflow import run_resume_agent_workflow
+from api_client import (
+    call_agent_workflow_api,
+    call_markdown_report_api,
+    call_rag_retrieve_api,
+    check_api_health,
+)
 from api_server import AgentWorkflowRequest, MarkdownReportRequest, RagRetrieveRequest, app as api_app
 from eval_runner import discover_eval_cases, load_eval_case, run_evaluations
 from rag import build_chunk_records, detect_resume_sections, get_local_embedding, split_text
@@ -428,6 +434,20 @@ def test_rag_evaluation_metrics() -> None:
     assert_true(metrics["mrr"] == 0.5, "首个 evidence 在 rank 2 时 MRR 应为 0.5")
 
 
+def test_api_client_imports_and_offline_error() -> None:
+    for api_function in [
+        check_api_health,
+        call_rag_retrieve_api,
+        call_agent_workflow_api,
+        call_markdown_report_api,
+    ]:
+        assert_true(callable(api_function), "api_client 函数应该可以 import")
+
+    offline_result = check_api_health("http://127.0.0.1:1")
+    assert_true(offline_result["success"] is False, "无效 API 地址应该返回 success=False")
+    assert_true(bool(offline_result["error"]), "无效 API 地址应该返回友好错误")
+
+
 if __name__ == "__main__":
     test_split_text()
     test_chunk_metadata()
@@ -450,4 +470,5 @@ if __name__ == "__main__":
     test_fastapi_files_and_request_models()
     test_final_hardening_documents()
     test_rag_evaluation_metrics()
+    test_api_client_imports_and_offline_error()
     print("simple_test.py: all tests passed")

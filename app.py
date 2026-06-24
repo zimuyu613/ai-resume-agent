@@ -6,9 +6,15 @@ import streamlit as st
 from docx import Document
 from pypdf import PdfReader
 
+from api_client import (
+    call_agent_workflow_api,
+    call_rag_retrieve_api,
+    check_api_health,
+)
 from agent_workflow import run_resume_agent_workflow
-from agent import run_agent_workflow, run_rag_workflow
+from agent import extract_section, run_agent_workflow, run_rag_workflow
 from rag import get_embedding_provider
+from tools import llm_match_analysis_tool
 
 
 BASE_DIR = Path(__file__).parent
@@ -29,6 +35,114 @@ SECTION_OPTIONS = {
 
 SECTION_LABELS = {value: label for label, value in SECTION_OPTIONS.items()}
 SECTION_LABELS[None] = "全部"
+
+LOCAL_BACKEND_MODE = "本地函数模式"
+API_BACKEND_MODE = "FastAPI 接口模式"
+DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
+
+
+def _analysis_error_result(message: str) -> dict:
+    return {
+        "success": False,
+        "error": message,
+        "job_analysis": message,
+        "resume_analysis": message,
+        "match_analysis": message,
+        "suggestions": message,
+        "full_report": message,
+        "analysis": message,
+        "rag_sources": [],
+        "retrieved_chunks": [],
+        "workflow_steps": [],
+        "trace": {},
+    }
+
+
+def _split_analysis_report(full_report: str) -> dict:
+    return {
+        "job_analysis": extract_section(full_report, "岗位要求分析", "个人能力分析"),
+        "resume_analysis": extract_section(full_report, "个人能力分析", "匹配度分析"),
+        "match_analysis": extract_section(full_report, "匹配度分析", "简历优化建议"),
+        "suggestions": extract_section(full_report, "简历优化建议", None),
+        "full_report": full_report,
+        "analysis": full_report,
+    }
+
+
+def _agent_api_result(api_result: dict, top_k: int, use_rag: bool) -> dict:
+    if not api_result.get("success"):
+        return _analysis_error_result(api_result.get("error") or "FastAPI Agent Workflow 调用失败。")
+
+    data = api_result.get("data") or {}
+    full_report = data.get("analysis", "")
+    if not full_report.strip():
+        return _analysis_error_result("FastAPI Agent Workflow 未返回分析文本。")
+
+    chunks = data.get("retrieved_chunks", [])
+    trace = data.get("trace") or {}
+    return {
+        **_split_analysis_report(full_report),
+        "success": True,
+        "error": data.get("error"),
+        "retrieved_chunks": chunks,
+        "rag_sources": chunks,
+        "retrieved_chunk_count": len(chunks),
+        "rag_top_k": top_k,
+        "rag_total_chunks": len(chunks),
+        "workflow_steps": data.get("workflow_steps", []),
+        "trace": trace,
+        "used_rerank": trace.get("used_rerank", False),
+        "rerank_method": trace.get("rerank_method"),
+        "api_mode": True,
+        "api_used_rag": use_rag,
+    }
+
+
+def _run_api_rag_analysis(
+    base_url: str,
+    resume_text: str,
+    job_description: str,
+    top_k: int,
+    use_rerank: bool,
+) -> dict:
+    retrieval_call = call_rag_retrieve_api(
+        base_url=base_url,
+        resume_text=resume_text,
+        job_description=job_description,
+        top_k=top_k,
+        use_rerank=use_rerank,
+    )
+    if not retrieval_call.get("success"):
+        return _analysis_error_result(retrieval_call.get("error") or "FastAPI RAG 检索失败。")
+
+    retrieval_data = retrieval_call.get("data") or {}
+    chunks = retrieval_data.get("retrieved_chunks", [])
+    if not chunks:
+        return _analysis_error_result("FastAPI RAG 检索未返回可用于分析的片段。")
+
+    llm_result = llm_match_analysis_tool(
+        resume_text=resume_text,
+        job_description=job_description,
+        retrieved_chunks=chunks,
+        use_rag=True,
+    )
+    if not llm_result.success:
+        return _analysis_error_result(llm_result.error or "本地 LLM 分析失败。")
+
+    return {
+        **llm_result.data,
+        "success": True,
+        "error": None,
+        "retrieved_chunks": chunks,
+        "rag_sources": chunks,
+        "retrieved_chunk_count": len(chunks),
+        "rag_top_k": top_k,
+        "rag_total_chunks": len(chunks),
+        "used_rerank": retrieval_data.get("used_rerank", False),
+        "rerank_method": retrieval_data.get("rerank_method"),
+        "api_mode": True,
+        "api_hybrid_mode": True,
+    }
 
 
 def load_sample_text(path: Path) -> str:
@@ -291,6 +405,10 @@ def render_analysis_page() -> None:
     st.title("简历岗位匹配分析")
     st.write("按步骤输入岗位 JD 和简历内容，可选择普通分析或 RAG 检索增强分析。")
 
+    backend_mode = st.session_state.get("backend_runtime_mode", LOCAL_BACKEND_MODE)
+    api_base_url = st.session_state.get("api_base_url", DEFAULT_API_BASE_URL)
+    st.caption(f"当前运行后端模式：{backend_mode}")
+
     current_embedding_provider = get_embedding_provider()
 
     st.caption("RAG 模式会先从简历中检索与岗位最相关的片段，再交给大模型生成分析结果。")
@@ -368,8 +486,12 @@ def render_analysis_page() -> None:
             value=False,
             help="在 ChromaDB 初步召回后，根据 JD 关键词、section 和 distance 二次排序。",
         )
-        section_label = st.selectbox("RAG 检索范围", list(SECTION_OPTIONS.keys()), index=0)
-        section_filter = SECTION_OPTIONS[section_label]
+        if backend_mode == API_BACKEND_MODE:
+            section_filter = None
+            st.caption("FastAPI MVP 暂未暴露 section_filter，API 模式使用全部简历片段检索。")
+        else:
+            section_label = st.selectbox("RAG 检索范围", list(SECTION_OPTIONS.keys()), index=0)
+            section_filter = SECTION_OPTIONS[section_label]
     else:
         section_filter = None
         use_rerank = False
@@ -379,27 +501,63 @@ def render_analysis_page() -> None:
             st.warning("请先输入岗位描述，并上传或填写个人经历。")
         else:
             with st.spinner("正在分析中，请稍等..."):
-                if agent_workflow_enabled:
-                    result = run_resume_agent_workflow(
-                        resume_text=final_resume_text,
-                        job_description=job_description,
-                        top_k=rag_top_k,
-                        use_rag=True,
-                        source_name=source_name,
-                        section_filter=section_filter,
-                        use_rerank=use_rerank,
-                    )
-                elif rag_enabled:
-                    result = run_rag_workflow(
-                        job_description,
-                        final_resume_text,
-                        source_name=source_name,
-                        top_k=rag_top_k,
-                        section_filter=section_filter,
-                        use_rerank=use_rerank,
-                    )
+                if backend_mode == API_BACKEND_MODE:
+                    if agent_workflow_enabled:
+                        result = _agent_api_result(
+                            call_agent_workflow_api(
+                                base_url=api_base_url,
+                                resume_text=final_resume_text,
+                                job_description=job_description,
+                                top_k=rag_top_k,
+                                use_rag=True,
+                                use_rerank=use_rerank,
+                            ),
+                            top_k=rag_top_k,
+                            use_rag=True,
+                        )
+                    elif rag_enabled:
+                        result = _run_api_rag_analysis(
+                            base_url=api_base_url,
+                            resume_text=final_resume_text,
+                            job_description=job_description,
+                            top_k=rag_top_k,
+                            use_rerank=use_rerank,
+                        )
+                    else:
+                        result = _agent_api_result(
+                            call_agent_workflow_api(
+                                base_url=api_base_url,
+                                resume_text=final_resume_text,
+                                job_description=job_description,
+                                top_k=rag_top_k,
+                                use_rag=False,
+                                use_rerank=False,
+                            ),
+                            top_k=rag_top_k,
+                            use_rag=False,
+                        )
                 else:
-                    result = run_agent_workflow(job_description, final_resume_text)
+                    if agent_workflow_enabled:
+                        result = run_resume_agent_workflow(
+                            resume_text=final_resume_text,
+                            job_description=job_description,
+                            top_k=rag_top_k,
+                            use_rag=True,
+                            source_name=source_name,
+                            section_filter=section_filter,
+                            use_rerank=use_rerank,
+                        )
+                    elif rag_enabled:
+                        result = run_rag_workflow(
+                            job_description,
+                            final_resume_text,
+                            source_name=source_name,
+                            top_k=rag_top_k,
+                            section_filter=section_filter,
+                            use_rerank=use_rerank,
+                        )
+                    else:
+                        result = run_agent_workflow(job_description, final_resume_text)
 
             # 保存本次分析结果，避免点击下载按钮或切换 RAG 片段预览时页面 rerun 后结果消失。
             st.session_state["last_analysis_result"] = result
@@ -415,6 +573,8 @@ def render_analysis_page() -> None:
             st.error(result["error"])
         else:
             st.success("分析完成")
+            if result.get("api_hybrid_mode"):
+                st.info("RAG retrieve API 已完成；当前 API 尚无独立 RAG 分析接口，LLM 分析仍走本地逻辑。")
             if result_agent_workflow_enabled and result.get("workflow_steps"):
                 with st.expander("查看 Agent Workflow Steps", expanded=True):
                     for index, step in enumerate(result["workflow_steps"], start=1):
@@ -579,22 +739,25 @@ def render_about_page() -> None:
     st.markdown("- 示例模式")
     st.markdown("- Markdown 报告导出")
     st.markdown("- 基础测试脚本 simple_test.py")
+    st.markdown("- Tool Calling / Agent Workflow / Trace")
+    st.markdown("- Lightweight Rerank / RAG Evaluation")
+    st.markdown("- FastAPI 接口与 local / API 双模式")
 
     st.subheader("当前不足")
     st.markdown("- 当前更像 RAG Workflow，不是完整多工具 Agent。")
     st.markdown("- Gemini API 可能受地区和额度影响。")
     st.markdown("- local hash embedding 语义能力有限。")
-    st.markdown("- 还没有 rerank。")
-    st.markdown("- 还没有系统化检索质量评估。")
-    st.markdown("- 还没有 FastAPI 服务化。")
-    st.markdown("- 还没有完整 Trace / 日志面板。")
+    st.markdown("- Rerank 是规则方法，不是 cross-encoder。")
+    st.markdown("- Eval case 和 gold evidence 数量仍较少。")
+    st.markdown("- FastAPI 是接口 MVP，没有鉴权、数据库和任务队列。")
+    st.markdown("- API mode 的 RAG 报告生成仍有本地 LLM 调用。")
 
     st.subheader("后续计划")
     st.markdown("- metadata 过滤")
-    st.markdown("- rerank")
-    st.markdown("- FastAPI 服务化")
-    st.markdown("- Tool Calling")
-    st.markdown("- Trace 执行轨迹")
+    st.markdown("- cross-encoder rerank")
+    st.markdown("- 完整 API 化 RAG 报告生成")
+    st.markdown("- 更严格的检索与答案质量评测")
+    st.markdown("- Trace 集中存储与查询")
     st.markdown("- DeepSeek / OpenAI-compatible 模型切换")
     st.markdown("- 更完整测试")
 
@@ -625,6 +788,32 @@ with st.sidebar:
         page_options,
         key="selected_page",
     )
+
+    st.divider()
+    st.subheader("运行后端模式")
+    backend_mode = st.radio(
+        "选择调用方式",
+        [LOCAL_BACKEND_MODE, API_BACKEND_MODE],
+        key="backend_runtime_mode",
+        help="本地模式直接调用 Python；API 模式通过 HTTP 调用 FastAPI。",
+    )
+    if backend_mode == API_BACKEND_MODE:
+        if "api_base_url" not in st.session_state:
+            st.session_state["api_base_url"] = DEFAULT_API_BASE_URL
+        api_base_url = st.text_input(
+            "API Base URL",
+            key="api_base_url",
+        )
+        if st.button("检查 API 连接", key="check_api_connection"):
+            health_result = check_api_health(api_base_url)
+            if health_result.get("success"):
+                health_data = health_result.get("data") or {}
+                st.success(
+                    f"API 连接成功：{health_data.get('project', 'FastAPI')} "
+                    f"{health_data.get('version', '')}"
+                )
+            else:
+                st.error(health_result.get("error") or "FastAPI 连接失败。")
 
     st.divider()
     st.caption("AI 应用工程化 MVP / RAG Workflow 原型")

@@ -72,7 +72,51 @@ Streamlit 适合快速验证 AI 应用交互：上传文件、调整 top_k、查
 
 ## 为什么补 FastAPI
 
-FastAPI 将核心能力暴露为稳定的 JSON 接口，展示请求模型、参数校验和接口文档能力，也为后续把 Streamlit 或其他前端改为 HTTP 调用提供基础。当前 Streamlit 仍直接调用模块，因此只是前后端分离雏形。
+FastAPI 将核心能力暴露为稳定的 JSON 接口，展示请求模型、参数校验和接口文档能力，也为后续替换其他前端提供基础。Streamlit 现在可以选择直接调用模块或通过 HTTP 调用 FastAPI。
+
+## Local Mode 数据流
+
+```text
+Streamlit UI
+-> 本地 Python 函数
+-> RAG / Agent Workflow / Trace
+-> Streamlit 展示与导出
+```
+
+Local mode 是默认模式，避免 API 服务未启动时影响 Demo，也便于单机调试和快速面试展示。
+
+## API Mode 数据流
+
+```text
+Streamlit UI
+-> api_client.py
+-> HTTP / JSON
+-> FastAPI api_server.py
+-> tools.py / agent_workflow.py
+-> HTTP response
+-> Streamlit 展示
+```
+
+普通分析与 Agent Workflow 通过 `/api/agent/workflow`。RAG 模式通过 `/api/rag/retrieve` 获取片段；当前其后续 LLM 报告仍在 Streamlit 进程本地生成，因为后端尚未提供独立 RAG 分析接口。
+
+## 为什么保留 Local Mode
+
+- 保留已有稳定功能与最低演示依赖。
+- API 服务不可用时仍可运行项目。
+- 方便定位问题属于 UI、HTTP 还是核心业务模块。
+- 避免为了展示解耦而提前引入复杂部署结构。
+
+## FastAPI Mode 的价值
+
+API mode 验证了展示层可以依赖 JSON 接口，为后续替换成 React/Vue、小程序或其他客户端提供基础，也可以独立做接口测试、鉴权和服务部署。
+
+## 当前解耦边界
+
+- Streamlit 不是独立前端工程，仍与业务代码处于同一仓库和 Python 环境。
+- RAG API mode 的 LLM 分析暂时仍走本地函数。
+- 文件上传尚未通过 multipart API，页面先解析为文本后再请求后端。
+- 没有统一用户身份、历史数据库、任务队列和生产网关。
+- API 与 local mode 复用同一个本地 ChromaDB 设计，不适合多用户并发。
 
 ## 当前架构边界
 
@@ -85,7 +129,7 @@ FastAPI 将核心能力暴露为稳定的 JSON 接口，展示请求模型、参
 
 ## 后续可升级方向
 
-- 让 Streamlit 通过 FastAPI 调用核心能力。
+- 让 API mode 覆盖文件上传和完整 RAG 报告生成。
 - 增加统一响应模型、错误码、超时和限流。
 - 增加持久化任务与多用户数据隔离。
 - 增加严格检索指标和真实模型评测。

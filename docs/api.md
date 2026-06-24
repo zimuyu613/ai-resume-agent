@@ -8,6 +8,27 @@
 
 Swagger UI：`http://127.0.0.1:8000/docs`
 
+## Streamlit API Client
+
+`api_client.py` 使用 `requests` 封装 FastAPI 调用，并统一返回：
+
+```json
+{
+  "success": true,
+  "data": {},
+  "error": null
+}
+```
+
+它负责处理连接失败、超时、非 JSON、非 2xx 和后端 `success=false`。Streamlit 在 FastAPI 接口模式下使用：
+
+- `check_api_health()` -> `GET /api/health`
+- `call_rag_retrieve_api()` -> `POST /api/rag/retrieve`
+- `call_agent_workflow_api()` -> `POST /api/agent/workflow`
+- `call_markdown_report_api()` -> `POST /api/report/markdown`（当前页面仍保留本地 Markdown 导出）
+
+当前 RAG API mode 只通过后端取得 retrieved chunks，后续 LLM 报告仍由 Streamlit 本地调用现有工具生成。Agent Workflow API mode 则使用后端返回的 analysis、steps 与 trace。
+
 ## GET `/api/health`
 
 **用途**：确认 API 进程可访问。
