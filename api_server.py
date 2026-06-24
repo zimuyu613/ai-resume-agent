@@ -9,7 +9,7 @@ from agent_workflow import run_resume_agent_workflow
 from tools import export_markdown_tool, rag_retrieve_tool
 
 
-PROJECT_VERSION = "v1.6-fastapi-backend-mvp"
+PROJECT_VERSION = "v2.3-multi-model-provider-mvp"
 
 app = FastAPI(
     title="AI Resume Agent API",
@@ -39,6 +39,8 @@ class AgentWorkflowRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20)
     use_rag: bool = True
     use_rerank: bool = False
+    llm_provider: str | None = None
+    llm_model: str | None = None
     use_mock_llm: bool = False
 
     @field_validator("resume_text", "job_description")
@@ -73,21 +75,6 @@ async def validation_exception_handler(_request, exc: RequestValidationError) ->
         status_code=422,
         content={"success": False, "error": "Invalid request: " + "; ".join(messages)},
     )
-
-
-def _mock_llm_for_smoke_test(_prompt: str) -> str:
-    return """## 岗位要求分析
-岗位要求 Python、RAG 和 Agent 应用开发能力。
-
-## 个人能力分析
-候选人的示例经历体现了基础项目能力。
-
-## 匹配度分析
-当前信息与岗位存在基础匹配。
-
-## 简历优化建议
-补充项目指标、问题排查过程和实际效果。
-"""
 
 
 @app.get("/api/health")
@@ -134,7 +121,9 @@ def run_agent(request: AgentWorkflowRequest) -> dict[str, Any]:
             top_k=request.top_k,
             use_rag=request.use_rag,
             use_rerank=request.use_rerank,
-            llm_callable=_mock_llm_for_smoke_test if request.use_mock_llm else None,
+            llm_provider=request.llm_provider,
+            llm_model=request.llm_model,
+            use_mock_llm=request.use_mock_llm,
         )
         return {
             "success": result.get("success", False),
@@ -142,7 +131,9 @@ def run_agent(request: AgentWorkflowRequest) -> dict[str, Any]:
             "retrieved_chunks": result.get("retrieved_chunks", []),
             "workflow_steps": result.get("workflow_steps", []),
             "trace": result.get("trace", {}),
-            "llm_mode": "mock" if request.use_mock_llm else "gemini",
+            "llm_mode": "mock" if request.use_mock_llm else result.get("llm_provider"),
+            "llm_provider": result.get("llm_provider"),
+            "llm_model": result.get("llm_model"),
             "error": result.get("error"),
         }
     except Exception as exc:
@@ -152,7 +143,9 @@ def run_agent(request: AgentWorkflowRequest) -> dict[str, Any]:
             "retrieved_chunks": [],
             "workflow_steps": [],
             "trace": {},
-            "llm_mode": "mock" if request.use_mock_llm else "gemini",
+            "llm_mode": "mock" if request.use_mock_llm else request.llm_provider,
+            "llm_provider": "mock" if request.use_mock_llm else request.llm_provider,
+            "llm_model": request.llm_model,
             "error": f"Agent Workflow failed: {exc}",
         }
 

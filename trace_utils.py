@@ -39,6 +39,9 @@ class WorkflowTrace:
     used_fallback: bool | None
     used_rerank: bool = False
     rerank_method: str | None = None
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    use_mock_llm: bool = False
     steps: list[TraceStep] = field(default_factory=list)
     final_status: str = "running"
     error: str | None = None

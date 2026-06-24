@@ -98,6 +98,8 @@ def call_agent_workflow_api(
     top_k: int = 5,
     use_rag: bool = True,
     use_rerank: bool = False,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
     use_mock_llm: bool = False,
 ) -> dict[str, Any]:
     return _call_api(
@@ -110,6 +112,8 @@ def call_agent_workflow_api(
             "top_k": top_k,
             "use_rag": use_rag,
             "use_rerank": use_rerank,
+            "llm_provider": llm_provider,
+            "llm_model": llm_model,
             "use_mock_llm": use_mock_llm,
         },
         timeout=AGENT_TIMEOUT_SECONDS,

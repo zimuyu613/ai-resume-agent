@@ -101,6 +101,8 @@ Swagger UI：`http://127.0.0.1:8000/docs`
   "top_k": 3,
   "use_rag": true,
   "use_rerank": true,
+  "llm_provider": "openai_compatible",
+  "llm_model": "deepseek-chat",
   "use_mock_llm": false
 }
 ```
@@ -114,12 +116,16 @@ Swagger UI：`http://127.0.0.1:8000/docs`
   "retrieved_chunks": [],
   "workflow_steps": [],
   "trace": {"run_id": "20260624T...", "final_status": "success"},
-  "llm_mode": "gemini",
+  "llm_mode": "openai_compatible",
+  "llm_provider": "openai_compatible",
+  "llm_model": "deepseek-chat",
   "error": null
 }
 ```
 
-**真实 LLM 依赖**：默认依赖 Gemini。设置 `use_mock_llm=true` 时使用确定性 mock，仅用于 smoke test 和接口链路验证。
+**Provider 参数**：`llm_provider` 支持 `gemini`、`openai_compatible`、`mock`；`llm_model` 可覆盖环境默认模型。没有传 provider 时，后端读取 `.env` 的 `LLM_PROVIDER`。`use_mock_llm=true` 的优先级最高。
+
+**真实 LLM 依赖**：Gemini 和 OpenAI-compatible 模式依赖对应 Key。设置 `use_mock_llm=true` 或 `llm_provider="mock"` 时使用确定性 mock，仅用于 smoke test 和接口链路验证。
 
 **当前限制**：固定工具流程、同步执行；没有复杂 planning、任务队列、历史记录或权限系统。
 

@@ -6,7 +6,8 @@ from typing import Any, Callable
 from docx import Document
 from pypdf import PdfReader
 
-from agent import call_llm, extract_section, run_agent_workflow
+from agent import extract_section
+from llm_provider import generate_with_llm
 from prompts import COMPREHENSIVE_ANALYSIS_PROMPT, RAG_ANALYSIS_PROMPT
 from rag import retrieve_relevant_chunks_with_sources
 from rerank_utils import rerank_chunks
@@ -188,6 +189,9 @@ def llm_match_analysis_tool(
     retrieved_chunks: list[dict[str, Any]] | None = None,
     use_rag: bool = True,
     llm_callable: Callable[[str], str] | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+    use_mock_llm: bool = False,
 ) -> ToolResult:
     """Run normal LLM analysis or RAG-grounded LLM analysis."""
     tool_name = "llm_match_analysis_tool"
@@ -208,16 +212,40 @@ def llm_match_analysis_tool(
                 job_description=job_description[:4000],
                 retrieved_context="\n\n".join(context_parts),
             )
-            full_report = (llm_callable or call_llm)(prompt)
-            analysis = _split_report(full_report)
-        elif llm_callable:
+        else:
             prompt = COMPREHENSIVE_ANALYSIS_PROMPT.format(
                 job_description=job_description[:4000],
                 resume_text=resume_text[:4000],
             )
-            analysis = _split_report(llm_callable(prompt))
+
+        if llm_callable:
+            full_report = llm_callable(prompt)
+            provider_used = "mock"
+            model_used = "custom-callable"
         else:
-            analysis = run_agent_workflow(job_description, resume_text)
+            llm_result = generate_with_llm(
+                prompt=prompt,
+                provider=llm_provider,
+                model=llm_model,
+                use_mock=use_mock_llm,
+            )
+            if not llm_result.success:
+                return ToolResult(
+                    success=False,
+                    tool_name=tool_name,
+                    message="LLM match analysis failed.",
+                    data={
+                        "llm_provider": llm_result.provider,
+                        "llm_model": llm_result.model,
+                        "use_mock_llm": use_mock_llm,
+                    },
+                    error=llm_result.error,
+                )
+            full_report = llm_result.text
+            provider_used = llm_result.provider
+            model_used = llm_result.model
+
+        analysis = _split_report(full_report)
 
         return _success(
             tool_name,
@@ -226,6 +254,9 @@ def llm_match_analysis_tool(
                 **analysis,
                 "use_rag": use_rag,
                 "retrieved_chunk_count": len(retrieved_chunks or []),
+                "llm_provider": provider_used,
+                "llm_model": model_used,
+                "use_mock_llm": use_mock_llm or llm_callable is not None,
             },
         )
     except Exception as exc:

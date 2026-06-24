@@ -43,26 +43,6 @@ def load_eval_case(case_dir: str | Path) -> dict[str, Any]:
     }
 
 
-def mock_llm_for_eval(_prompt: str) -> str:
-    """Deterministic output for validating workflow structure without Gemini."""
-    return """## 岗位要求分析
-岗位关注 Python、RAG、LLM 应用开发和 Agent 工程实践。
-
-## 个人能力分析
-### 能力匹配
-候选人的项目体现了 Python、RAG 和大模型应用基础。
-
-### 差距
-生产环境部署、规模化评测和复杂 Agent planning 仍需补充。
-
-## 匹配度分析
-当前经历与岗位存在基础能力匹配，但应继续用指标验证检索质量。
-
-## 简历优化建议
-补充召回率、响应耗时、测试覆盖和实际问题修复案例。
-"""
-
-
 def _contains_hits(text: str, expected_values: list[str]) -> list[str]:
     normalized = (text or "").lower()
     return [value for value in expected_values if value.lower() in normalized]
@@ -164,7 +144,8 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
         use_rag=True,
         use_rerank=True,
         source_name=f"{case['case_name']}/resume.txt",
-        llm_callable=mock_llm_for_eval,
+        llm_provider="mock",
+        use_mock_llm=True,
     )
     analysis = agent_result.get("analysis", "")
     agent_workflow_passed = bool(
@@ -195,7 +176,8 @@ def evaluate_case(case: dict[str, Any], top_k: int = 5) -> dict[str, Any]:
         job_description=job_description,
         top_k=top_k,
         use_rag=False,
-        llm_callable=mock_llm_for_eval,
+        llm_provider="mock",
+        use_mock_llm=True,
     )
     non_rag_trace = non_rag_result.get("trace") or {}
     non_rag_steps = non_rag_trace.get("steps") or []

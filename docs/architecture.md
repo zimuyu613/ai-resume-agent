@@ -24,7 +24,11 @@ Streamlit 展示层，负责简历上传、JD 输入、三种模式选择、RAG 
 
 ### `agent.py`
 
-负责 Gemini 客户端、Prompt 调用、错误提示，以及普通 LLM / RAG 报告的生成和拆分。
+负责 Prompt 构造、普通 LLM / RAG 报告生成与拆分，通过 `llm_provider.py` 调用模型。
+
+### `llm_provider.py`
+
+统一 LLM Provider 层，封装 Gemini、OpenAI-compatible Chat Completions 和 deterministic mock。业务 Workflow 只传 provider/model，不直接处理不同厂商协议。
 
 ### `tools.py`
 
@@ -73,6 +77,15 @@ Streamlit 适合快速验证 AI 应用交互：上传文件、调整 top_k、查
 ## 为什么补 FastAPI
 
 FastAPI 将核心能力暴露为稳定的 JSON 接口，展示请求模型、参数校验和接口文档能力，也为后续替换其他前端提供基础。Streamlit 现在可以选择直接调用模块或通过 HTTP 调用 FastAPI。
+
+## 为什么抽象 LLM Provider
+
+- 避免 Prompt、RAG 和 Agent Workflow 与单一模型 SDK 耦合。
+- 让本地页面和 FastAPI 使用相同 provider 参数。
+- 使用 mock 保证测试和 Eval 不依赖外部网络与额度。
+- 为 OpenAI-compatible 服务提供最小接入点，而不引入额外 SDK。
+
+当前 provider 层不负责自动选模、价格比较、熔断、限流或质量路由；真实模型的 Key、URL 和模型名仍由环境变量管理。
 
 ## Local Mode 数据流
 

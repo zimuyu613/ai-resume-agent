@@ -13,6 +13,7 @@ from api_client import (
 )
 from agent_workflow import run_resume_agent_workflow
 from agent import extract_section, run_agent_workflow, run_rag_workflow
+from llm_provider import get_llm_provider_from_env
 from rag import get_embedding_provider
 from tools import llm_match_analysis_tool
 
@@ -39,6 +40,7 @@ SECTION_LABELS[None] = "全部"
 LOCAL_BACKEND_MODE = "本地函数模式"
 API_BACKEND_MODE = "FastAPI 接口模式"
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
+LLM_PROVIDER_OPTIONS = ["gemini", "openai_compatible", "mock"]
 
 
 def _analysis_error_result(message: str) -> dict:
@@ -93,6 +95,9 @@ def _agent_api_result(api_result: dict, top_k: int, use_rag: bool) -> dict:
         "trace": trace,
         "used_rerank": trace.get("used_rerank", False),
         "rerank_method": trace.get("rerank_method"),
+        "llm_provider": data.get("llm_provider") or trace.get("llm_provider"),
+        "llm_model": data.get("llm_model") or trace.get("llm_model"),
+        "use_mock_llm": trace.get("use_mock_llm", False),
         "api_mode": True,
         "api_used_rag": use_rag,
     }
@@ -104,6 +109,8 @@ def _run_api_rag_analysis(
     job_description: str,
     top_k: int,
     use_rerank: bool,
+    llm_provider: str,
+    llm_model: str | None = None,
 ) -> dict:
     retrieval_call = call_rag_retrieve_api(
         base_url=base_url,
@@ -125,6 +132,9 @@ def _run_api_rag_analysis(
         job_description=job_description,
         retrieved_chunks=chunks,
         use_rag=True,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        use_mock_llm=llm_provider == "mock",
     )
     if not llm_result.success:
         return _analysis_error_result(llm_result.error or "本地 LLM 分析失败。")
@@ -250,6 +260,9 @@ def render_agent_trace(result: dict) -> None:
             "rerank_method": trace.get("rerank_method"),
             "embedding_provider": trace.get("embedding_provider"),
             "used_fallback": trace.get("used_fallback"),
+            "llm_provider": trace.get("llm_provider"),
+            "llm_model": trace.get("llm_model"),
+            "use_mock_llm": trace.get("use_mock_llm"),
         }
     )
 
@@ -407,7 +420,12 @@ def render_analysis_page() -> None:
 
     backend_mode = st.session_state.get("backend_runtime_mode", LOCAL_BACKEND_MODE)
     api_base_url = st.session_state.get("api_base_url", DEFAULT_API_BASE_URL)
+    selected_llm_provider = st.session_state.get(
+        "selected_llm_provider",
+        get_llm_provider_from_env(),
+    )
     st.caption(f"当前运行后端模式：{backend_mode}")
+    st.caption(f"当前 LLM Provider：{selected_llm_provider}")
 
     current_embedding_provider = get_embedding_provider()
 
@@ -511,6 +529,8 @@ def render_analysis_page() -> None:
                                 top_k=rag_top_k,
                                 use_rag=True,
                                 use_rerank=use_rerank,
+                                llm_provider=selected_llm_provider,
+                                use_mock_llm=selected_llm_provider == "mock",
                             ),
                             top_k=rag_top_k,
                             use_rag=True,
@@ -522,6 +542,7 @@ def render_analysis_page() -> None:
                             job_description=job_description,
                             top_k=rag_top_k,
                             use_rerank=use_rerank,
+                            llm_provider=selected_llm_provider,
                         )
                     else:
                         result = _agent_api_result(
@@ -532,6 +553,8 @@ def render_analysis_page() -> None:
                                 top_k=rag_top_k,
                                 use_rag=False,
                                 use_rerank=False,
+                                llm_provider=selected_llm_provider,
+                                use_mock_llm=selected_llm_provider == "mock",
                             ),
                             top_k=rag_top_k,
                             use_rag=False,
@@ -546,6 +569,8 @@ def render_analysis_page() -> None:
                             source_name=source_name,
                             section_filter=section_filter,
                             use_rerank=use_rerank,
+                            llm_provider=selected_llm_provider,
+                            use_mock_llm=selected_llm_provider == "mock",
                         )
                     elif rag_enabled:
                         result = run_rag_workflow(
@@ -555,9 +580,16 @@ def render_analysis_page() -> None:
                             top_k=rag_top_k,
                             section_filter=section_filter,
                             use_rerank=use_rerank,
+                            llm_provider=selected_llm_provider,
+                            use_mock_llm=selected_llm_provider == "mock",
                         )
                     else:
-                        result = run_agent_workflow(job_description, final_resume_text)
+                        result = run_agent_workflow(
+                            job_description,
+                            final_resume_text,
+                            llm_provider=selected_llm_provider,
+                            use_mock_llm=selected_llm_provider == "mock",
+                        )
 
             # 保存本次分析结果，避免点击下载按钮或切换 RAG 片段预览时页面 rerun 后结果消失。
             st.session_state["last_analysis_result"] = result
@@ -573,6 +605,10 @@ def render_analysis_page() -> None:
             st.error(result["error"])
         else:
             st.success("分析完成")
+            st.caption(
+                f"LLM：{result.get('llm_provider', selected_llm_provider)}"
+                f" / {result.get('llm_model') or 'default model'}"
+            )
             if result.get("api_hybrid_mode"):
                 st.info("RAG retrieve API 已完成；当前 API 尚无独立 RAG 分析接口，LLM 分析仍走本地逻辑。")
             if result_agent_workflow_enabled and result.get("workflow_steps"):
@@ -814,6 +850,22 @@ with st.sidebar:
                 )
             else:
                 st.error(health_result.get("error") or "FastAPI 连接失败。")
+
+    st.subheader("LLM Provider")
+    if "selected_llm_provider" not in st.session_state:
+        st.session_state["selected_llm_provider"] = get_llm_provider_from_env()
+    selected_llm_provider = st.selectbox(
+        "选择模型调用方式",
+        LLM_PROVIDER_OPTIONS,
+        key="selected_llm_provider",
+    )
+    if selected_llm_provider == "openai_compatible":
+        st.info(
+            "需要在 .env 中配置 OPENAI_COMPATIBLE_API_KEY、"
+            "OPENAI_COMPATIBLE_BASE_URL 和 OPENAI_COMPATIBLE_MODEL。"
+        )
+    elif selected_llm_provider == "mock":
+        st.warning("当前使用 mock LLM，只用于测试流程，不代表真实模型质量。")
 
     st.divider()
     st.caption("AI 应用工程化 MVP / RAG Workflow 原型")

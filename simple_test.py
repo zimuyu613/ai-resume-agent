@@ -13,6 +13,7 @@ from api_client import (
 )
 from api_server import AgentWorkflowRequest, MarkdownReportRequest, RagRetrieveRequest, app as api_app
 from eval_runner import discover_eval_cases, load_eval_case, run_evaluations
+from llm_provider import LLMResult, generate_with_llm
 from rag import build_chunk_records, detect_resume_sections, get_local_embedding, split_text
 from rag_eval_utils import evaluate_retrieval_result
 from rerank_utils import extract_keywords, rerank_chunks
@@ -448,6 +449,44 @@ def test_api_client_imports_and_offline_error() -> None:
     assert_true(bool(offline_result["error"]), "无效 API 地址应该返回友好错误")
 
 
+def test_multi_model_provider_offline_paths() -> None:
+    created = LLMResult(
+        success=True,
+        provider="mock",
+        model="test-model",
+        text="测试",
+    )
+    assert_true(created.provider == "mock", "LLMResult 应该可以创建")
+
+    mock_result = generate_with_llm("测试 Prompt", use_mock=True)
+    assert_true(mock_result.success, "mock LLM 应该返回 success=True")
+    assert_true(mock_result.provider == "mock", "mock LLM 应记录 provider=mock")
+    assert_true("岗位要求分析" in mock_result.text, "mock LLM 应返回稳定结构")
+
+    original_key = os.environ.pop("OPENAI_COMPATIBLE_API_KEY", None)
+    try:
+        missing_key_result = generate_with_llm(
+            "测试 Prompt",
+            provider="openai_compatible",
+        )
+    finally:
+        if original_key is not None:
+            os.environ["OPENAI_COMPATIBLE_API_KEY"] = original_key
+    assert_true(missing_key_result.success is False, "缺少兼容 API Key 时应该友好失败")
+    assert_true("OPENAI_COMPATIBLE_API_KEY" in missing_key_result.error, "错误应指出缺少 API Key")
+
+    workflow = run_resume_agent_workflow(
+        resume_text="Python RAG 项目",
+        job_description="AI 应用开发岗位",
+        use_rag=False,
+        llm_provider="mock",
+        use_mock_llm=True,
+    )
+    assert_true(workflow["success"], "Agent Workflow mock provider 路径应该成功")
+    assert_true(workflow["trace"]["llm_provider"] == "mock", "Trace 应记录 mock provider")
+    assert_true(workflow["trace"]["use_mock_llm"] is True, "Trace 应记录 use_mock_llm")
+
+
 if __name__ == "__main__":
     test_split_text()
     test_chunk_metadata()
@@ -471,4 +510,5 @@ if __name__ == "__main__":
     test_final_hardening_documents()
     test_rag_evaluation_metrics()
     test_api_client_imports_and_offline_error()
+    test_multi_model_provider_offline_paths()
     print("simple_test.py: all tests passed")

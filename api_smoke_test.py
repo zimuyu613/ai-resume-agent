@@ -58,6 +58,7 @@ def main() -> int:
                     "top_k": 2,
                     "use_rag": True,
                     "use_rerank": True,
+                    "llm_provider": "mock",
                     "use_mock_llm": True,
                 },
                 timeout=TIMEOUT_SECONDS,
@@ -65,6 +66,8 @@ def main() -> int:
         )
         if not workflow.get("trace", {}).get("run_id"):
             raise RuntimeError("Agent workflow response is missing trace.run_id")
+        if workflow.get("llm_provider") != "mock":
+            raise RuntimeError("Agent workflow did not use the requested mock provider")
 
         _check_response(
             "POST /api/report/markdown",

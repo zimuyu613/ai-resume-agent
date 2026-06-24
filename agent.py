@@ -1,108 +1,33 @@
-import os
-import time
-from dotenv import load_dotenv
-from google import genai
-
 from prompts import (
-    SYSTEM_PROMPT,
     COMPREHENSIVE_ANALYSIS_PROMPT,
     RAG_ANALYSIS_PROMPT,
 )
 from rag import retrieve_relevant_chunks_with_sources
 from rerank_utils import rerank_chunks
-
-# 读取 .env 文件中的环境变量
-load_dotenv()
-
-# 初始化 Gemini 客户端
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-# 从 .env 读取模型名称，如果没有配置，则使用默认模型
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+from llm_provider import LLMResult, generate_with_llm
 
 
-def format_llm_error(error: Exception) -> str:
-    """
-    将 Gemini 常见错误转换成面向用户的简洁提示。
-    详细错误保留在控制台，方便开发调试。
-    """
-    error_msg = str(error)
-    error_lower = error_msg.lower()
-    print(f"Gemini 调用详细错误：{error_msg}")
-
-    if "429" in error_msg or "resource_exhausted" in error_lower or "quota" in error_lower:
-        return (
-            "调用模型时出现错误：Gemini API 额度不足或请求过多。"
-            "请稍后重试、降低请求频率，或更换可用的 API Key / 计费方案。"
-        )
-
-    if "user location is not supported" in error_lower or "location is not supported" in error_lower:
-        return (
-            "调用模型时出现错误：当前地区可能不支持 Gemini API。"
-            "请检查网络环境，或切换到可用的模型服务。"
-        )
-
-    model_error_keywords = [
-        "model name",
-        "model not found",
-        "unexpected model name format",
-        "invalid argument",
-    ]
-    if any(keyword in error_lower for keyword in model_error_keywords):
-        return (
-            "调用模型时出现错误：模型名称配置可能不正确。"
-            "请检查 .env 中的 GEMINI_MODEL，例如 gemini-2.5-flash 或 gemini-2.0-flash。"
-        )
-
-    if "api key" in error_lower or "permission_denied" in error_lower or "unauthenticated" in error_lower:
-        return "调用模型时出现错误：API Key 无效或缺少权限，请检查 .env 中的 GEMINI_API_KEY。"
-
-    return "调用模型时出现错误：模型服务暂时不可用，请稍后重试或检查控制台日志。"
+def call_llm_result(
+    prompt: str,
+    provider: str | None = None,
+    model: str | None = None,
+    use_mock: bool = False,
+    timeout: int = 60,
+) -> LLMResult:
+    """Call the unified provider layer while prompt construction stays in agent.py."""
+    return generate_with_llm(prompt, provider, model, use_mock, timeout)
 
 
-def call_llm(prompt: str) -> str:
-    """
-    调用 Gemini 大语言模型并返回文本结果。
-    增加简单重试机制，用于处理 503 高负载等临时错误。
-    """
-    if not os.getenv("GEMINI_API_KEY"):
-        return "错误：未检测到 GEMINI_API_KEY，请先在 .env 文件中配置 GEMINI_API_KEY。"
-
-    full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
-
-    max_retries = 5
-    retryable_errors = [
-        "503",
-        "UNAVAILABLE",
-        "Server disconnected",
-        "without sending a response",
-        "timeout",
-        "timed out",
-        "connection",
-        "Connection",
-        "temporarily unavailable",
-    ]
-
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=full_prompt,
-            )
-
-            return response.text or "模型没有返回文本结果。"
-
-        except Exception as e:
-            error_msg = str(e)
-
-            if any(err in error_msg for err in retryable_errors):
-                wait_time = 2 * (attempt + 1)
-                time.sleep(wait_time)
-                continue
-
-            return format_llm_error(e)
-
-    return "调用模型失败：当前模型请求量较高，已自动重试多次。请稍后再次点击分析。"
+def call_llm(
+    prompt: str,
+    provider: str | None = None,
+    model: str | None = None,
+    use_mock: bool = False,
+    timeout: int = 60,
+) -> str:
+    """Backward-compatible text-only wrapper around the unified provider layer."""
+    result = call_llm_result(prompt, provider, model, use_mock, timeout)
+    return result.text if result.success else f"错误：{result.error}"
 
 
 def extract_section(text: str, title: str, next_title: str | None = None) -> str:
@@ -127,7 +52,13 @@ def extract_section(text: str, title: str, next_title: str | None = None) -> str
     return text[start_index:].strip()
 
 
-def run_agent_workflow(job_description: str, resume_text: str) -> dict:
+def run_agent_workflow(
+    job_description: str,
+    resume_text: str,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+    use_mock_llm: bool = False,
+) -> dict:
     """
     单次综合调用版 Agent Workflow：
     通过一次模型调用完成四个分析模块，减少免费 API 高负载时的失败概率。
@@ -147,7 +78,13 @@ def run_agent_workflow(job_description: str, resume_text: str) -> dict:
         resume_text=resume_text,
     )
 
-    full_report = call_llm(prompt)
+    llm_result = call_llm_result(
+        prompt,
+        provider=llm_provider,
+        model=llm_model,
+        use_mock=use_mock_llm,
+    )
+    full_report = llm_result.text if llm_result.success else f"错误：{llm_result.error}"
 
     job_analysis = extract_section(
         full_report,
@@ -179,6 +116,9 @@ def run_agent_workflow(job_description: str, resume_text: str) -> dict:
         "match_analysis": match_analysis,
         "suggestions": suggestions,
         "full_report": full_report,
+        "llm_provider": llm_result.provider,
+        "llm_model": llm_result.model,
+        "error": None if llm_result.success else llm_result.error,
     }
 
 
@@ -206,6 +146,9 @@ def run_rag_workflow(
     top_k: int = 3,
     section_filter: str | None = None,
     use_rerank: bool = False,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+    use_mock_llm: bool = False,
 ) -> dict:
     """
     RAG 增强版分析流程：
@@ -253,7 +196,13 @@ def run_rag_workflow(
         retrieved_context=retrieved_context,
     )
 
-    full_report = call_llm(prompt)
+    llm_result = call_llm_result(
+        prompt,
+        provider=llm_provider,
+        model=llm_model,
+        use_mock=use_mock_llm,
+    )
+    full_report = llm_result.text if llm_result.success else f"错误：{llm_result.error}"
 
     job_analysis = extract_section(
         full_report,
@@ -285,6 +234,9 @@ def run_rag_workflow(
         "match_analysis": match_analysis,
         "suggestions": suggestions,
         "full_report": full_report,
+        "llm_provider": llm_result.provider,
+        "llm_model": llm_result.model,
+        "error": None if llm_result.success else llm_result.error,
         "retrieved_context": retrieved_context,
         "retrieved_chunk_count": len(sources),
         "rag_sources": sources,

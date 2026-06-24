@@ -2,6 +2,7 @@ from time import perf_counter
 from typing import Any, Callable
 
 from rag import get_embedding_provider
+from llm_provider import get_llm_provider_from_env
 from tools import ToolResult, llm_match_analysis_tool, rag_retrieve_tool
 from trace_utils import (
     TraceStep,
@@ -145,6 +146,9 @@ def _base_result(
         "rag_available_filtered_chunks": retrieval_data.get("rag_available_filtered_chunks"),
         "used_rerank": retrieval_data.get("used_rerank", False),
         "rerank_method": retrieval_data.get("rerank_method"),
+        "llm_provider": trace.llm_provider,
+        "llm_model": trace.llm_model,
+        "use_mock_llm": trace.use_mock_llm,
     }
 
 
@@ -157,10 +161,19 @@ def run_resume_agent_workflow(
     section_filter: str | None = None,
     use_rerank: bool = False,
     llm_callable: Callable[[str], str] | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+    use_mock_llm: bool = False,
 ) -> dict[str, Any]:
     """Run the fixed tool chain and return analysis plus a lightweight trace."""
     workflow_started = perf_counter()
     configured_provider = get_embedding_provider() if use_rag else None
+    resolved_llm_provider = (
+        "mock" if use_mock_llm or llm_callable is not None else (llm_provider or get_llm_provider_from_env())
+    )
+    effective_use_mock = bool(
+        use_mock_llm or llm_callable is not None or resolved_llm_provider == "mock"
+    )
     trace = WorkflowTrace(
         run_id=create_run_id(),
         mode="agent_workflow_rag" if use_rag else "agent_workflow_llm",
@@ -175,6 +188,9 @@ def run_resume_agent_workflow(
         used_fallback=None,
         used_rerank=bool(use_rag and use_rerank),
         rerank_method="rule_based" if use_rag and use_rerank else None,
+        llm_provider=resolved_llm_provider,
+        llm_model=llm_model,
+        use_mock_llm=effective_use_mock,
     )
     retrieved_chunks: list[dict[str, Any]] = []
     retrieval_data: dict[str, Any] = {}
@@ -246,6 +262,9 @@ def run_resume_agent_workflow(
             "retrieved_chunk_count": len(retrieved_chunks),
             "use_rag": use_rag,
             "use_rerank": bool(use_rag and use_rerank),
+            "llm_provider": resolved_llm_provider,
+            "llm_model": llm_model,
+            "use_mock_llm": effective_use_mock,
         },
         tool_call=lambda: llm_match_analysis_tool(
             resume_text=resume_text,
@@ -253,14 +272,23 @@ def run_resume_agent_workflow(
             retrieved_chunks=retrieved_chunks,
             use_rag=use_rag,
             llm_callable=llm_callable,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            use_mock_llm=effective_use_mock,
         ),
         output_builder=lambda result: {
             "analysis_length": len(result.data.get("full_report", "")),
             "has_result": bool(result.data.get("full_report")),
             "retrieved_chunk_count": result.data.get("retrieved_chunk_count", 0),
+            "llm_provider": result.data.get("llm_provider"),
+            "llm_model": result.data.get("llm_model"),
+            "use_mock_llm": result.data.get("use_mock_llm", False),
         },
     )
     trace.steps.append(llm_step)
+    trace.llm_provider = llm_result.data.get("llm_provider", trace.llm_provider)
+    trace.llm_model = llm_result.data.get("llm_model", trace.llm_model)
+    trace.use_mock_llm = llm_result.data.get("use_mock_llm", trace.use_mock_llm)
 
     if not llm_result.success:
         message = f"Agent Workflow stopped at LLM analysis: {llm_result.error}"

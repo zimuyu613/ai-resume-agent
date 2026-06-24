@@ -119,8 +119,12 @@ python -m venv .venv
 复制 `.env.example` 为 `.env`，填写自己的 Gemini API Key：
 
 ```env
+LLM_PROVIDER=gemini
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
+OPENAI_COMPATIBLE_API_KEY=your_openai_compatible_api_key_here
+OPENAI_COMPATIBLE_BASE_URL=https://api.deepseek.com/v1
+OPENAI_COMPATIBLE_MODEL=deepseek-chat
 EMBEDDING_PROVIDER=local
 LOCAL_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
@@ -210,6 +214,18 @@ API mode 中，普通分析和 Agent Workflow 使用 `/api/agent/workflow`；RAG
 
 当前 Streamlit 仍是 Demo UI，不是 React/Vue 等独立前端工程，因此这是前后端分离雏形，而非完整前后端架构。
 
+## Multi-Model Provider MVP
+
+项目使用 `llm_provider.py` 提供统一模型调用入口，支持：
+
+- `gemini`：使用现有 `google-genai` SDK。
+- `openai_compatible`：使用 `requests` 调用 Chat Completions 兼容接口，可用于 DeepSeek、Qwen 兼容服务或其他兼容平台。
+- `mock`：返回稳定的结构化文本，用于测试、Eval 和无 API Key 的工程链路演示。
+
+普通分析、RAG 分析和 Agent Workflow 不再直接绑定单一模型厂商。Streamlit 侧边栏可选择 provider；API mode 会把 `llm_provider`、`llm_model` 和 `use_mock_llm` 传给后端。未显式传 provider 时，后端读取 `.env` 中的 `LLM_PROVIDER`。
+
+当前实现只是多模型调用 MVP，没有复杂模型路由、成本统计、自动 fallback、熔断、限流或多模型质量评测。显式选择真实 provider 但缺少 Key 时会返回友好错误，不会静默伪装成真实模型结果。
+
 ## Trace / Observability
 
 Agent Workflow 每次运行都会生成 `run_id`，记录输入长度、top_k、embedding provider、是否 fallback、总耗时、最终状态以及每个工具步骤的输入输出摘要、耗时和错误。
@@ -247,7 +263,8 @@ Agent Workflow 每次运行都会生成 `run_id`，记录输入长度、top_k、
 ```text
 resume-agent/
 ├─ app.py                  # Streamlit 页面、三种模式、结果与 Trace 展示
-├─ agent.py                # Gemini 调用、普通 LLM 与 RAG 分析逻辑
+├─ agent.py                # Prompt、普通 LLM 与 RAG 分析逻辑
+├─ llm_provider.py         # Gemini / OpenAI-compatible / Mock 统一调用层
 ├─ rag.py                  # section-aware chunking、embedding、ChromaDB 检索
 ├─ rerank_utils.py         # 关键词、section、distance 规则二次排序
 ├─ prompts.py              # 系统 Prompt、普通分析 Prompt、RAG Prompt
