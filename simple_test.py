@@ -484,7 +484,9 @@ def test_multi_model_provider_offline_paths() -> None:
 
     # --- get_llm_provider_from_env() must NOT silently downgrade on missing key ---
     original_gemini_key = os.environ.pop("GEMINI_API_KEY", None)
+    original_llm_prov = os.environ.get("LLM_PROVIDER")
     try:
+        os.environ["LLM_PROVIDER"] = "gemini"
         resolved = get_llm_provider_from_env()
         assert_true(
             resolved == "gemini",
@@ -493,6 +495,10 @@ def test_multi_model_provider_offline_paths() -> None:
     finally:
         if original_gemini_key is not None:
             os.environ["GEMINI_API_KEY"] = original_gemini_key
+        if original_llm_prov is not None:
+            os.environ["LLM_PROVIDER"] = original_llm_prov
+        else:
+            os.environ.pop("LLM_PROVIDER", None)
 
     # --- gemini fallback when GEMINI_API_KEY is missing ---
     original_gemini_key = os.environ.pop("GEMINI_API_KEY", None)
@@ -569,6 +575,44 @@ def test_multi_model_provider_offline_paths() -> None:
     assert_true(
         bool(ds_fallback.error),
         "DeepSeek fallback 结果应保留 provider_error",
+    )
+
+    # --- Agent Workflow with provider="deepseek" must not report "unsupported" ---
+    original_ds_key2 = os.environ.pop("DEEPSEEK_API_KEY", None)
+    original_llm_provider2 = os.environ.get("LLM_PROVIDER")
+    try:
+        os.environ["LLM_PROVIDER"] = "deepseek"
+        ds_workflow = run_resume_agent_workflow(
+            resume_text="Python RAG 项目",
+            job_description="AI 应用开发岗位",
+            use_rag=False,
+            llm_provider="deepseek",
+            fallback_to_mock=True,
+        )
+    finally:
+        if original_ds_key2 is not None:
+            os.environ["DEEPSEEK_API_KEY"] = original_ds_key2
+        else:
+            os.environ.pop("DEEPSEEK_API_KEY", None)
+        if original_llm_provider2 is not None:
+            os.environ["LLM_PROVIDER"] = original_llm_provider2
+        else:
+            os.environ.pop("LLM_PROVIDER", None)
+
+    assert_true(ds_workflow["success"], "Agent Workflow with deepseek+fallback 应该成功")
+    assert_true(ds_workflow["trace"]["fallback_used"] is True, "Trace 应记录 fallback_used=True")
+    assert_true(
+        ds_workflow["trace"]["original_provider"] == "deepseek",
+        "Trace 应记录 original_provider=deepseek",
+    )
+    assert_true(
+        ds_workflow["trace"]["llm_provider"] == "mock",
+        "Fallback 后 llm_provider 应为 mock",
+    )
+    err_msg = ds_workflow.get("error") or ""
+    assert_true(
+        "不支持的" not in err_msg,
+        f"不应报不支持的 provider 错误，实际 error: {err_msg}",
     )
 
     # --- openai_compatible fallback when keys are missing ---
