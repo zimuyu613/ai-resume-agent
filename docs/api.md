@@ -154,7 +154,7 @@ GET /api/llm/health?provider=mock&use_mock=true
 }
 ```
 
-**Provider 参数**：`llm_provider` 支持 `gemini`、`openai_compatible`、`mock`；`llm_model` 可覆盖环境默认模型。没有传 provider 时，后端读取 `.env` 的 `LLM_PROVIDER`。`use_mock_llm=true` 的优先级最高。
+**Provider 参数**：`llm_provider` 支持 `gemini`、`deepseek`、`openai_compatible`、`mock`；`llm_model` 可覆盖环境默认模型。没有传 provider 时，后端读取 `.env` 的 `LLM_PROVIDER`。`use_mock_llm=true` 的优先级最高。DeepSeek 作为独立 Provider 名称，底层复用 Chat Completions 协议，但 Trace 中记录 `llm_provider=deepseek`。
 
 `fallback_to_mock` 默认是 `true`。真实 provider 失败后，返回的 `llm_provider` 会是 `mock`，并通过 `fallback_used`、`original_provider` 和 `provider_error` 说明降级原因。
 

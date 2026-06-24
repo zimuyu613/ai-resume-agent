@@ -1,4 +1,5 @@
 import json
+import os
 from io import BytesIO
 from pathlib import Path
 
@@ -41,7 +42,14 @@ SECTION_LABELS[None] = "全部"
 LOCAL_BACKEND_MODE = "本地函数模式"
 API_BACKEND_MODE = "FastAPI 接口模式"
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
-LLM_PROVIDER_OPTIONS = ["gemini", "openai_compatible", "mock"]
+LLM_PROVIDER_OPTIONS = ["gemini", "deepseek", "openai_compatible", "mock"]
+LLM_PROVIDER_LABELS = {
+    "gemini": "Gemini",
+    "deepseek": "DeepSeek",
+    "openai_compatible": "OpenAI Compatible",
+    "mock": "Mock",
+}
+DEEPSEEK_MODEL_OPTIONS = ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "custom"]
 
 
 def _analysis_error_result(message: str) -> dict:
@@ -526,6 +534,8 @@ def render_analysis_page() -> None:
         section_filter = None
         use_rerank = False
 
+    selected_llm_model = st.session_state.get("selected_llm_model")
+
     if st.button("开始分析"):
         if not job_description.strip() or not final_resume_text:
             st.warning("请先输入岗位描述，并上传或填写个人经历。")
@@ -542,6 +552,7 @@ def render_analysis_page() -> None:
                                 use_rag=True,
                                 use_rerank=use_rerank,
                                 llm_provider=selected_llm_provider,
+                                llm_model=selected_llm_model,
                                 use_mock_llm=selected_llm_provider == "mock",
                                 fallback_to_mock=fallback_to_mock,
                             ),
@@ -556,6 +567,7 @@ def render_analysis_page() -> None:
                             top_k=rag_top_k,
                             use_rerank=use_rerank,
                             llm_provider=selected_llm_provider,
+                            llm_model=selected_llm_model,
                             fallback_to_mock=fallback_to_mock,
                         )
                     else:
@@ -568,6 +580,7 @@ def render_analysis_page() -> None:
                                 use_rag=False,
                                 use_rerank=False,
                                 llm_provider=selected_llm_provider,
+                                llm_model=selected_llm_model,
                                 use_mock_llm=selected_llm_provider == "mock",
                                 fallback_to_mock=fallback_to_mock,
                             ),
@@ -585,6 +598,7 @@ def render_analysis_page() -> None:
                             section_filter=section_filter,
                             use_rerank=use_rerank,
                             llm_provider=selected_llm_provider,
+                            llm_model=selected_llm_model,
                             use_mock_llm=selected_llm_provider == "mock",
                             fallback_to_mock=fallback_to_mock,
                         )
@@ -597,6 +611,7 @@ def render_analysis_page() -> None:
                             section_filter=section_filter,
                             use_rerank=use_rerank,
                             llm_provider=selected_llm_provider,
+                            llm_model=selected_llm_model,
                             use_mock_llm=selected_llm_provider == "mock",
                             fallback_to_mock=fallback_to_mock,
                         )
@@ -605,6 +620,7 @@ def render_analysis_page() -> None:
                             job_description,
                             final_resume_text,
                             llm_provider=selected_llm_provider,
+                            llm_model=selected_llm_model,
                             use_mock_llm=selected_llm_provider == "mock",
                             fallback_to_mock=fallback_to_mock,
                         )
@@ -877,12 +893,51 @@ with st.sidebar:
     st.subheader("LLM Provider")
     if "selected_llm_provider" not in st.session_state:
         st.session_state["selected_llm_provider"] = get_llm_provider_from_env()
-    selected_llm_provider = st.selectbox(
+
+    provider_labels = [LLM_PROVIDER_LABELS[p] for p in LLM_PROVIDER_OPTIONS]
+    label_to_provider = {v: k for k, v in LLM_PROVIDER_LABELS.items()}
+    # Sync label index from internal value (survives page reruns)
+    current_internal = st.session_state["selected_llm_provider"]
+    current_label = LLM_PROVIDER_LABELS.get(current_internal, provider_labels[0])
+    if "provider_label_idx" not in st.session_state:
+        try:
+            st.session_state["provider_label_idx"] = provider_labels.index(current_label)
+        except ValueError:
+            st.session_state["provider_label_idx"] = 0
+
+    selected_label = st.selectbox(
         "选择模型调用方式",
-        LLM_PROVIDER_OPTIONS,
-        key="selected_llm_provider",
+        provider_labels,
+        key="provider_label_idx",
     )
-    if selected_llm_provider == "openai_compatible":
+    selected_llm_provider = label_to_provider[selected_label]
+    st.session_state["selected_llm_provider"] = selected_llm_provider
+
+    # DeepSeek model selector
+    selected_llm_model: str | None = None
+    if selected_llm_provider == "deepseek":
+        default_deepseek = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+        if "deepseek_model_choice" not in st.session_state:
+            st.session_state["deepseek_model_choice"] = (
+                default_deepseek if default_deepseek in DEEPSEEK_MODEL_OPTIONS else "deepseek-v4-flash"
+            )
+        model_choice = st.selectbox(
+            "DeepSeek 模型",
+            DEEPSEEK_MODEL_OPTIONS,
+            key="deepseek_model_choice",
+        )
+        if model_choice == "custom":
+            custom_model = st.text_input(
+                "自定义 DeepSeek 模型名",
+                value=st.session_state.get("deepseek_custom_model", ""),
+                key="deepseek_custom_model",
+                placeholder="例如：deepseek-reasoner",
+            )
+            selected_llm_model = custom_model.strip() if custom_model.strip() else None
+        else:
+            selected_llm_model = model_choice
+        st.caption(f"当前 DeepSeek 模型：{selected_llm_model or default_deepseek}")
+    elif selected_llm_provider == "openai_compatible":
         st.info(
             "需要在 .env 中配置 OPENAI_COMPATIBLE_API_KEY、"
             "OPENAI_COMPATIBLE_BASE_URL 和 OPENAI_COMPATIBLE_MODEL。"
@@ -890,11 +945,14 @@ with st.sidebar:
     elif selected_llm_provider == "mock":
         st.warning("当前使用 mock LLM，只用于测试流程，不代表真实模型质量。")
 
+    st.session_state["selected_llm_model"] = selected_llm_model
+
     if st.button("检查 LLM Provider", key="check_llm_provider"):
         if backend_mode == API_BACKEND_MODE:
             health_call = check_llm_health_api(
                 api_base_url,
                 provider=selected_llm_provider,
+                model=selected_llm_model,
                 use_mock=selected_llm_provider == "mock",
             )
             if health_call.get("success"):
@@ -909,6 +967,7 @@ with st.sidebar:
         else:
             health = check_llm_provider_health(
                 provider=selected_llm_provider,
+                model=selected_llm_model,
                 use_mock=selected_llm_provider == "mock",
             )
             health_data = {

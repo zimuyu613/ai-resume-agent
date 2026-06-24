@@ -525,6 +525,52 @@ def test_multi_model_provider_offline_paths() -> None:
         "Gemini fallback 结果应保留 provider_error",
     )
 
+    # --- deepseek fallback when DEEPSEEK_API_KEY is missing ---
+    original_ds_key = os.environ.pop("DEEPSEEK_API_KEY", None)
+    original_llm_provider = os.environ.get("LLM_PROVIDER")
+    try:
+        # get_llm_provider_from_env should return "deepseek" when configured
+        os.environ["LLM_PROVIDER"] = "deepseek"
+        resolved_ds = get_llm_provider_from_env()
+        assert_true(
+            resolved_ds == "deepseek",
+            f"LLM_PROVIDER=deepseek 时应返回 'deepseek'，实际返回 {resolved_ds}",
+        )
+
+        ds_no_key = generate_with_llm(
+            "测试 Prompt",
+            provider="deepseek",
+            fallback_to_mock=False,
+        )
+        ds_fallback = generate_with_llm(
+            "测试 Prompt",
+            provider="deepseek",
+            fallback_to_mock=True,
+        )
+    finally:
+        if original_ds_key is not None:
+            os.environ["DEEPSEEK_API_KEY"] = original_ds_key
+        else:
+            os.environ.pop("DEEPSEEK_API_KEY", None)
+        if original_llm_provider is not None:
+            os.environ["LLM_PROVIDER"] = original_llm_provider
+        else:
+            os.environ.pop("LLM_PROVIDER", None)
+
+    assert_true(ds_no_key.success is False, "缺少 DeepSeek Key 且不 fallback 时应失败")
+    assert_true("API Key" in (ds_no_key.error or ""), "错误应指出缺少 API Key")
+    assert_true(ds_fallback.success, "启用 fallback 后缺少 DeepSeek Key 应返回 Mock 结果")
+    assert_true(ds_fallback.provider == "mock", "fallback provider 应该为 mock")
+    assert_true(ds_fallback.fallback_used, "DeepSeek fallback 结果应记录 fallback_used=True")
+    assert_true(
+        ds_fallback.original_provider == "deepseek",
+        "DeepSeek fallback 结果应记录 original_provider=deepseek",
+    )
+    assert_true(
+        bool(ds_fallback.error),
+        "DeepSeek fallback 结果应保留 provider_error",
+    )
+
     # --- openai_compatible fallback when keys are missing ---
     original_key = os.environ.pop("OPENAI_COMPATIBLE_API_KEY", None)
     original_url = os.environ.pop("OPENAI_COMPATIBLE_BASE_URL", None)

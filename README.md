@@ -219,7 +219,8 @@ API mode 中，普通分析和 Agent Workflow 使用 `/api/agent/workflow`；RAG
 项目使用 `llm_provider.py` 提供统一模型调用入口，支持：
 
 - `gemini`：使用现有 `google-genai` SDK。
-- `openai_compatible`：使用 `requests` 调用 Chat Completions 兼容接口，可用于 DeepSeek、Qwen 兼容服务或其他兼容平台。
+- `deepseek`：DeepSeek 原生 Provider，底层复用 Chat Completions 协议，但在 Trace 和页面中独立显示为 `deepseek`。
+- `openai_compatible`：使用 `requests` 调用 Chat Completions 兼容接口，可用于 Qwen 兼容服务或其他兼容平台。
 - `mock`：返回稳定的结构化文本，用于测试、Eval 和无 API Key 的工程链路演示。
 
 普通分析、RAG 分析和 Agent Workflow 不再直接绑定单一模型厂商。Streamlit 侧边栏可选择 provider；API mode 会把 `llm_provider`、`llm_model` 和 `use_mock_llm` 传给后端。未显式传 provider 时，后端读取 `.env` 中的 `LLM_PROVIDER`。
@@ -228,9 +229,9 @@ API mode 中，普通分析和 Agent Workflow 使用 `/api/agent/workflow`；RAG
 
 ## Provider Health Check / Fallback MVP
 
-项目提供 LLM Provider 健康检查，可检查 Mock、Gemini 和 OpenAI-compatible 的配置与可用性。Mock 会立即返回可用；真实 provider 缺少 Key 或 Base URL 时只返回友好错误，不会发起外部请求。
+项目提供 LLM Provider 健康检查，可检查 Mock、Gemini、DeepSeek 和 OpenAI-compatible 的配置与可用性。Mock 会立即返回可用；真实 provider 缺少 Key 或 Base URL 时只返回友好错误，不会发起外部请求。
 
-模型调用支持超时参数和 `fallback_to_mock`。启用后，如果 Gemini 或 OpenAI-compatible 调用失败，流程会使用 Mock 完成 Demo，同时在结果和 Trace 中记录：
+模型调用支持超时参数和 `fallback_to_mock`。启用后，如果 Gemini、DeepSeek 或 OpenAI-compatible 调用失败，流程会使用 Mock 完成 Demo，同时在结果和 Trace 中记录：
 
 - `fallback_used`
 - `original_provider`

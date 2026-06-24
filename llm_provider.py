@@ -14,7 +14,7 @@ from prompts import SYSTEM_PROMPT
 
 load_dotenv()
 
-SUPPORTED_LLM_PROVIDERS = {"gemini", "openai_compatible", "mock"}
+SUPPORTED_LLM_PROVIDERS = {"gemini", "deepseek", "openai_compatible", "mock"}
 
 
 @dataclass
@@ -153,6 +153,67 @@ def _generate_gemini(prompt: str, model: str | None, timeout: int, max_retries: 
     return LLMResult(False, "gemini", selected_model, "", _format_gemini_error(last_error or RuntimeError("unknown error")))
 
 
+def _call_chat_completions(
+    prompt: str,
+    model: str,
+    timeout: int,
+    api_key: str,
+    base_url: str,
+    provider_name: str,
+) -> LLMResult:
+    """Shared Chat Completions HTTP logic — used by openai_compatible and deepseek."""
+    endpoint = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
+    try:
+        response = requests.post(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+            },
+            timeout=timeout,
+        )
+    except requests.Timeout:
+        return LLMResult(False, provider_name, model, "", f"模型请求超时（{timeout} 秒）。")
+    except requests.ConnectionError:
+        return LLMResult(False, provider_name, model, "", f"无法连接 {provider_name} 服务。")
+    except requests.RequestException as exc:
+        return LLMResult(False, provider_name, model, "", f"模型请求失败：{exc}")
+
+    try:
+        raw = response.json()
+    except ValueError:
+        return LLMResult(
+            False,
+            provider_name,
+            model,
+            "",
+            f"模型服务返回非 JSON 响应（HTTP {response.status_code}）。",
+        )
+    if not response.ok:
+        api_error = raw.get("error") if isinstance(raw, dict) else None
+        if isinstance(api_error, dict):
+            api_error = api_error.get("message") or str(api_error)
+        return LLMResult(
+            False,
+            provider_name,
+            model,
+            "",
+            f"模型服务返回 HTTP {response.status_code}：{api_error or 'unknown error'}",
+            raw=raw if isinstance(raw, dict) else None,
+        )
+
+    try:
+        text = raw["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return LLMResult(False, provider_name, model, "", "响应缺少 choices[0].message.content。", raw=raw)
+    return LLMResult(True, provider_name, model, str(text), raw=raw)
+
+
 def _generate_openai_compatible(
     prompt: str,
     model: str | None,
@@ -177,57 +238,27 @@ def _generate_openai_compatible(
             "",
             "未配置 OPENAI_COMPATIBLE_BASE_URL。",
         )
+    return _call_chat_completions(prompt, selected_model, timeout, api_key, base_url, "openai_compatible")
 
-    endpoint = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
-    try:
-        response = requests.post(
-            endpoint,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": selected_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-            },
-            timeout=timeout,
-        )
-    except requests.Timeout:
-        return LLMResult(False, "openai_compatible", selected_model, "", f"模型请求超时（{timeout} 秒）。")
-    except requests.ConnectionError:
-        return LLMResult(False, "openai_compatible", selected_model, "", "无法连接 OpenAI-compatible 服务。")
-    except requests.RequestException as exc:
-        return LLMResult(False, "openai_compatible", selected_model, "", f"模型请求失败：{exc}")
 
-    try:
-        raw = response.json()
-    except ValueError:
+def _generate_deepseek(
+    prompt: str,
+    model: str | None,
+    timeout: int,
+) -> LLMResult:
+    """DeepSeek native provider — reuses Chat Completions protocol under its own name."""
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip().rstrip("/")
+    selected_model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    if not api_key:
         return LLMResult(
             False,
-            "openai_compatible",
+            "deepseek",
             selected_model,
             "",
-            f"模型服务返回非 JSON 响应（HTTP {response.status_code}）。",
+            "未配置 DEEPSEEK_API_KEY。",
         )
-    if not response.ok:
-        api_error = raw.get("error") if isinstance(raw, dict) else None
-        if isinstance(api_error, dict):
-            api_error = api_error.get("message") or str(api_error)
-        return LLMResult(
-            False,
-            "openai_compatible",
-            selected_model,
-            "",
-            f"模型服务返回 HTTP {response.status_code}：{api_error or 'unknown error'}",
-            raw=raw if isinstance(raw, dict) else None,
-        )
-
-    try:
-        text = raw["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        return LLMResult(False, "openai_compatible", selected_model, "", "响应缺少 choices[0].message.content。", raw=raw)
-    return LLMResult(True, "openai_compatible", selected_model, str(text), raw=raw)
+    return _call_chat_completions(prompt, selected_model, timeout, api_key, base_url, "deepseek")
 
 
 def generate_with_llm(
@@ -260,6 +291,8 @@ def generate_with_llm(
         return _mock_result(model)
     if selected_provider == "gemini":
         result = _generate_gemini(full_prompt, model, timeout, max_retries=max_retries)
+    elif selected_provider == "deepseek":
+        result = _generate_deepseek(full_prompt, model, timeout)
     else:
         result = _generate_openai_compatible(full_prompt, model, timeout)
 
@@ -300,6 +333,9 @@ def check_llm_provider_health(
     if selected_provider == "gemini" and not os.getenv("GEMINI_API_KEY"):
         error = normalize_provider_error("未配置 GEMINI_API_KEY。")
         return ProviderHealthResult("gemini", model or os.getenv("GEMINI_MODEL"), False, "Gemini 配置不完整。", 0.0, error)
+    if selected_provider == "deepseek" and not os.getenv("DEEPSEEK_API_KEY"):
+        error = normalize_provider_error("未配置 DEEPSEEK_API_KEY。")
+        return ProviderHealthResult("deepseek", model or os.getenv("DEEPSEEK_MODEL"), False, "DeepSeek 配置不完整。", 0.0, error)
     if selected_provider == "openai_compatible":
         if not os.getenv("OPENAI_COMPATIBLE_API_KEY"):
             error = normalize_provider_error("未配置 OPENAI_COMPATIBLE_API_KEY。")

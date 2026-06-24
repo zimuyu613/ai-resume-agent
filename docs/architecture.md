@@ -28,7 +28,7 @@ Streamlit 展示层，负责简历上传、JD 输入、三种模式选择、RAG 
 
 ### `llm_provider.py`
 
-统一 LLM Provider 层，封装 Gemini、OpenAI-compatible Chat Completions 和 deterministic mock。业务 Workflow 只传 provider/model，不直接处理不同厂商协议。
+统一 LLM Provider 层，封装 Gemini、DeepSeek、OpenAI-compatible Chat Completions 和 deterministic mock。DeepSeek 作为独立 Provider 名称，底层复用 Chat Completions 协议，但 Trace 和页面会记录 `llm_provider=deepseek`。业务 Workflow 只传 provider/model，不直接处理不同厂商协议。
 
 ### `tools.py`
 
