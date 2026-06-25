@@ -3,7 +3,7 @@ from typing import Any, Callable
 
 from rag import get_embedding_provider
 from llm_provider import get_llm_provider_from_env
-from tools import ToolResult, llm_match_analysis_tool, rag_retrieve_tool
+from tools import ToolResult, llm_match_analysis_tool, rag_retrieve_tool, review_report_tool
 from trace_utils import (
     TraceStep,
     WorkflowTrace,
@@ -119,6 +119,9 @@ def _base_result(
     section_filter: str | None,
     retrieval_data: dict[str, Any],
     error: str | None = None,
+    review_result: dict[str, Any] | None = None,
+    query_refinement_used: bool = False,
+    retrieval_attempts: int = 1,
 ) -> dict[str, Any]:
     trace_dict, trace_path, trace_save_error = _finish_trace(
         trace,
@@ -153,7 +156,30 @@ def _base_result(
         "fallback_used": trace.fallback_used,
         "original_provider": trace.original_provider,
         "provider_error": trace.provider_error,
+        "review_result": review_result or {},
+        "query_refinement_used": query_refinement_used,
+        "retrieval_attempts": retrieval_attempts,
     }
+
+
+def evaluate_retrieval_quality(retrieved_chunks: list[dict[str, Any]]) -> tuple[str, str]:
+    """Simple heuristic to judge whether the first-pass retrieval is acceptable.
+
+    Returns (quality, reason) where quality is "low" or "ok".
+    """
+    if not retrieved_chunks:
+        return "low", "RAG 检索未返回任何片段。"
+
+    has_keywords = any(chunk.get("keyword_hits") for chunk in retrieved_chunks)
+    top_score = max(
+        (float(chunk.get("rerank_score", 0) or 0) for chunk in retrieved_chunks),
+        default=0,
+    )
+
+    if not has_keywords and top_score < 0.5:
+        return "low", "top chunks 缺少关键词命中且 rerank 分数较低。"
+
+    return "ok", "检索质量可接受。"
 
 
 def run_resume_agent_workflow(
@@ -197,9 +223,14 @@ def run_resume_agent_workflow(
         llm_model=llm_model,
         use_mock_llm=effective_use_mock,
         fallback_to_mock=fallback_to_mock,
+        review_passed=None,
+        query_refinement_used=False,
+        retrieval_attempts=1,
     )
     retrieved_chunks: list[dict[str, Any]] = []
     retrieval_data: dict[str, Any] = {}
+    query_refinement_used = False
+    retrieval_attempts = 1
 
     if use_rag:
         retrieve_result, retrieve_step = _timed_tool_step(
@@ -240,6 +271,37 @@ def run_resume_agent_workflow(
             and trace.embedding_provider
             and configured_provider != trace.embedding_provider
         )
+
+        # --- bounded query refinement (max 1 retry) ---
+        quality, reason = evaluate_retrieval_quality(retrieved_chunks)
+        trace.steps[-1].output_summary["retrieval_quality"] = quality
+        if quality == "low":
+            refined_query = " ".join(job_description.split()[:80]) if job_description else job_description
+            refine_result, refine_step = _timed_tool_step(
+                step_name="retrieve_resume_context_retry",
+                input_summary={
+                    "refinement_reason": reason,
+                    "original_top_k": top_k,
+                    "refined_query_preview": summarize_text(refined_query),
+                },
+                tool_call=lambda: rag_retrieve_tool(
+                    resume_text=resume_text,
+                    job_description=refined_query,
+                    top_k=top_k,
+                    source_name=source_name,
+                    section_filter=section_filter,
+                    use_rerank=use_rerank,
+                ),
+                output_builder=_rerank_summary,
+            )
+            trace.steps.append(refine_step)
+            query_refinement_used = True
+            retrieval_attempts = 2
+            if refine_result.success:
+                refined_chunks = refine_result.data.get("chunks", [])
+                if refined_chunks:
+                    retrieved_chunks = refined_chunks
+                    retrieval_data = refine_result.data
     else:
         timestamp = now_iso()
         trace.steps.append(
@@ -308,12 +370,44 @@ def run_resume_agent_workflow(
 
     if not llm_result.success:
         message = f"Agent Workflow stopped at LLM analysis: {llm_result.error}"
+        trace.query_refinement_used = query_refinement_used
+        trace.retrieval_attempts = retrieval_attempts
         return _base_result(
             trace, workflow_started, False, _error_analysis(message), retrieved_chunks,
             top_k, section_filter, retrieval_data, error=message,
+            query_refinement_used=query_refinement_used,
+            retrieval_attempts=retrieval_attempts,
         )
+
+    # --- reviewer step ---
+    analysis_text = llm_result.data.get("full_report", "")
+    review_result, review_step = _timed_tool_step(
+        step_name="review_match_analysis",
+        input_summary={
+            "analysis_length": len(analysis_text),
+            "retrieved_chunk_count": len(retrieved_chunks),
+        },
+        tool_call=lambda: review_report_tool(
+            job_description=job_description,
+            retrieved_chunks=retrieved_chunks,
+            analysis_text=analysis_text,
+        ),
+        output_builder=lambda result: {
+            "review_passed": result.data.get("review_passed"),
+            "missing_points_count": len(result.data.get("missing_points", [])),
+            "risk_notes_count": len(result.data.get("risk_notes", [])),
+            "review_summary": result.data.get("review_summary", ""),
+        },
+    )
+    trace.steps.append(review_step)
+    trace.review_passed = review_result.data.get("review_passed")
+    trace.query_refinement_used = query_refinement_used
+    trace.retrieval_attempts = retrieval_attempts
 
     return _base_result(
         trace, workflow_started, True, llm_result.data, retrieved_chunks,
         top_k, section_filter, retrieval_data,
+        review_result=review_result.data,
+        query_refinement_used=query_refinement_used,
+        retrieval_attempts=retrieval_attempts,
     )

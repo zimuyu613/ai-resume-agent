@@ -244,6 +244,16 @@ Streamlit 侧边栏可以执行 Provider 健康检查，并可选择“模型失
 
 **重要区分**：Mock Provider 用于本地测试和 Eval，不依赖外部服务；`fallback_to_mock` 是真实 Provider（Gemini / OpenAI-compatible）调用失败后的工程降级。Trace 中 `fallback_used=true` 时，`original_provider` 记录原始真实 Provider，`provider_error` 记录失败原因，此时 `llm_provider` 已变为 `mock`。判断真实模型是否成功应检查 `fallback_used=false` 且 `provider_error` 为空。
 
+## Lightweight Agent Harness
+
+项目新增轻量 Agent Harness 增强，用于提高分析流程的可解释性和稳定性：
+
+- **Reviewer Agent**：在 LLM 分析完成后，使用规则检查报告结构完整性（是否包含岗位要求分析、能力分析、匹配度分析和优化建议）和证据使用情况，生成 `review_passed`、`missing_points`、`risk_notes` 和 `improvement_suggestions`。
+- **Bounded Query Refinement Loop**：当第一次 RAG 检索质量不足时（无关键词命中或 rerank 分数低），自动用 JD 摘要执行第二次检索，最多重试一次。
+- 这不是复杂自主 Agent，而是轻量 Harness 增强。没有复杂 planning、长期记忆、沙盒或生产级权限控制。
+
+详细说明见 [Harness 文档](docs/harness.md)。
+
 ## Trace / Observability
 
 Agent Workflow 每次运行都会生成 `run_id`，记录输入长度、top_k、embedding provider、是否 fallback、总耗时、最终状态以及每个工具步骤的输入输出摘要、耗时和错误。

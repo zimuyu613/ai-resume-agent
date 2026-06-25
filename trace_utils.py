@@ -46,6 +46,9 @@ class WorkflowTrace:
     fallback_used: bool | None = None
     original_provider: str | None = None
     provider_error: str | None = None
+    review_passed: bool | None = None
+    query_refinement_used: bool = False
+    retrieval_attempts: int = 1
     steps: list[TraceStep] = field(default_factory=list)
     final_status: str = "running"
     error: str | None = None

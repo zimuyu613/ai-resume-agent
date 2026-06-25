@@ -319,3 +319,89 @@ def export_markdown_tool(
         )
     except Exception as exc:
         return _failure(tool_name, "Markdown export failed.", exc)
+
+
+def review_report_tool(
+    job_description: str,
+    retrieved_chunks: list[dict[str, Any]] | None,
+    analysis_text: str,
+) -> ToolResult:
+    """Rule-based reviewer that checks analysis report structure and evidence use.
+
+    This tool uses deterministic heuristics — no real LLM call — so it is stable
+    across tests and evals.  It returns review_passed=True only when the analysis
+    contains all expected structural sections.
+    """
+    tool_name = "review_report_tool"
+    missing_points: list[str] = []
+    risk_notes: list[str] = []
+    improvement_suggestions: list[str] = []
+
+    # 1. Non-empty analysis
+    if not analysis_text or not analysis_text.strip():
+        return ToolResult(
+            success=True,
+            tool_name=tool_name,
+            message="Review failed: empty analysis text.",
+            data={
+                "review_passed": False,
+                "missing_points": ["分析文本为空"],
+                "evidence_usage": "无分析文本，无法判断证据使用。",
+                "risk_notes": ["分析完全缺失，无法进行任何匹配判断。"],
+                "improvement_suggestions": ["请确保 LLM 分析步骤返回有效文本。"],
+                "review_summary": "分析文本为空，审核不通过。",
+            },
+        )
+
+    # 2. Check for key structural sections
+    expected_sections = {
+        "岗位要求分析": "岗位要求分析",
+        "能力分析": "能力分析（个人能力分析）",
+        "匹配": "匹配度分析",
+        "优化": "简历优化建议",
+    }
+    found_sections: list[str] = []
+    for keyword, label in expected_sections.items():
+        if keyword in analysis_text:
+            found_sections.append(label)
+        else:
+            missing_points.append(f"缺少关键结构：{label}")
+
+    # 3. Retrieved chunks presence
+    has_chunks = bool(retrieved_chunks)
+    if not has_chunks:
+        risk_notes.append("RAG 检索未返回有效片段，分析可能缺少简历证据支撑。")
+
+    # 4. Evidence keywords
+    evidence_keywords = ["项目", "技能", "实习", "经验", "Python", "RAG", "Agent", "开发", "实现"]
+    evidence_hits = sorted({kw for kw in evidence_keywords if kw in analysis_text})
+    evidence_usage = (
+        f"分析中涉及的关键证据词：{', '.join(evidence_hits)}"
+        if evidence_hits
+        else "分析中未发现明显技能或项目证据关键词。"
+    )
+    if not evidence_hits:
+        risk_notes.append("分析文本中缺少项目、技能或实习相关证据关键词。")
+        improvement_suggestions.append("建议在分析中引用更多简历中的项目经验、技能和实习经历。")
+
+    # 5. Determine pass/fail
+    review_passed = len(missing_points) == 0
+
+    if review_passed:
+        review_summary = "分析报告结构完整，包含所有关键部分。"
+    else:
+        review_summary = f"分析报告缺少 {len(missing_points)} 个关键结构，审核不通过。"
+
+    return ToolResult(
+        success=True,
+        tool_name=tool_name,
+        message=f"Review {'passed' if review_passed else 'failed'}: {review_summary}",
+        data={
+            "review_passed": review_passed,
+            "missing_points": missing_points,
+            "evidence_usage": evidence_usage,
+            "risk_notes": risk_notes,
+            "improvement_suggestions": improvement_suggestions,
+            "review_summary": review_summary,
+        },
+    )

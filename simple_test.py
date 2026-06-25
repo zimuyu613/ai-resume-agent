@@ -4,7 +4,7 @@ from pathlib import Path
 
 os.environ["EMBEDDING_PROVIDER"] = "local"
 
-from agent_workflow import run_resume_agent_workflow
+from agent_workflow import evaluate_retrieval_quality, run_resume_agent_workflow
 from api_client import (
     call_agent_workflow_api,
     call_markdown_report_api,
@@ -23,7 +23,7 @@ from llm_provider import (
 from rag import build_chunk_records, detect_resume_sections, get_local_embedding, split_text
 from rag_eval_utils import evaluate_retrieval_result
 from rerank_utils import extract_keywords, rerank_chunks
-from tools import ToolResult, rag_retrieve_tool
+from tools import ToolResult, rag_retrieve_tool, review_report_tool
 from trace_utils import TraceStep, WorkflowTrace, create_run_id, now_iso, trace_to_dict
 
 
@@ -673,6 +673,95 @@ def test_multi_model_provider_offline_paths() -> None:
     assert_true(workflow["trace"]["use_mock_llm"] is True, "Trace 应记录 use_mock_llm")
 
 
+def test_lightweight_agent_harness() -> None:
+    """Verify reviewer tool, retrieval quality, and agent workflow harness integration."""
+
+    # --- review_report_tool: empty analysis ---
+    empty_review = review_report_tool(
+        job_description="Python 开发岗位",
+        retrieved_chunks=[],
+        analysis_text="",
+    )
+    assert_true(empty_review.success, "review tool 自身应成功运行")
+    assert_true(empty_review.data["review_passed"] is False, "空 analysis 应 review_passed=False")
+    assert_true("分析文本为空" in empty_review.data["missing_points"], "应提示分析文本为空")
+
+    # --- review_report_tool: missing structures ---
+    partial_analysis = "## 岗位要求分析\n需要 Python。\n## 个人能力分析\n会 Python。"
+    partial_review = review_report_tool(
+        job_description="Python 开发岗位",
+        retrieved_chunks=[{"text": "Python", "section": "skills"}],
+        analysis_text=partial_analysis,
+    )
+    assert_true(partial_review.data["review_passed"] is False, "缺少匹配/优化结构应不通过")
+    assert_true(len(partial_review.data["missing_points"]) > 0, "应该有缺失结构列表")
+
+    # --- review_report_tool: full structure ---
+    full_analysis = """## 岗位要求分析
+需要 Python 开发能力。
+
+## 个人能力分析
+候选人具备 Python 项目经验。
+
+## 匹配度分析
+岗位要求与候选人技能匹配度较高。
+
+## 简历优化建议
+建议补充量化指标和项目效果。
+"""
+    full_review = review_report_tool(
+        job_description="Python RAG 开发岗位",
+        retrieved_chunks=[{"text": "Python RAG 项目", "section": "project_experience"}],
+        analysis_text=full_analysis,
+    )
+    assert_true(full_review.data["review_passed"] is True, "完整结构应 review_passed=True")
+    assert_true("项目" in full_review.data["evidence_usage"], "应检测到项目证据")
+
+    # --- evaluate_retrieval_quality ---
+    empty_quality, empty_reason = evaluate_retrieval_quality([])
+    assert_true(empty_quality == "low", "空 chunks 应返回 low")
+
+    ok_quality, ok_reason = evaluate_retrieval_quality([
+        {"keyword_hits": ["Python"], "rerank_score": 0.8},
+    ])
+    assert_true(ok_quality == "ok", "有关键词命中应返回 ok")
+
+    # --- Agent Workflow returns review_result ---
+    def mock_llm(prompt: str) -> str:
+        return full_analysis
+
+    result = run_resume_agent_workflow(
+        resume_text="Python RAG 项目经历",
+        job_description="Python RAG 开发岗位",
+        top_k=2,
+        use_rag=True,
+        llm_callable=mock_llm,
+    )
+    assert_true(result["success"], "Agent Workflow should succeed")
+    review = result.get("review_result") or {}
+    assert_true(review.get("review_passed") is True, "Workflow 应返回 review_passed")
+    # Refinement may or may not trigger depending on local embedding — only check bounding
+    attempts = result.get("retrieval_attempts", 1)
+    assert_true(
+        1 <= attempts <= 2,
+        f"retrieval_attempts 应在 [1, 2] 范围内，实际 {attempts}",
+    )
+    if result.get("query_refinement_used"):
+        assert_true(attempts == 2, "refinement 触发时 attempts 应为 2")
+
+    # --- query refinement is bounded (no infinite loop) ---
+    # Small resume text with few chunks ensures quality=low → triggers refinement
+    tiny_result = run_resume_agent_workflow(
+        resume_text="Python",
+        job_description="Python RAG Agent 开发",
+        top_k=2,
+        use_rag=True,
+        llm_callable=mock_llm,
+    )
+    attempts = tiny_result.get("retrieval_attempts", 1)
+    assert_true(attempts <= 2, f"retrieval_attempts 不应超过 2，实际 {attempts}")
+
+
 if __name__ == "__main__":
     test_split_text()
     test_chunk_metadata()
@@ -697,4 +786,5 @@ if __name__ == "__main__":
     test_rag_evaluation_metrics()
     test_api_client_imports_and_offline_error()
     test_multi_model_provider_offline_paths()
+    test_lightweight_agent_harness()
     print("simple_test.py: all tests passed")
