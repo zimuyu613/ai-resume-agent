@@ -1,5 +1,6 @@
 import json
 import os
+from html import escape
 from io import BytesIO
 from pathlib import Path
 
@@ -42,6 +43,7 @@ SECTION_LABELS[None] = "全部"
 LOCAL_BACKEND_MODE = "本地函数模式"
 API_BACKEND_MODE = "FastAPI 接口模式"
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
+APP_VERSION_LABEL = "v2.5 Lightweight Agent Harness"
 LLM_PROVIDER_OPTIONS = ["gemini", "deepseek", "openai_compatible", "mock"]
 LLM_PROVIDER_LABELS = {
     "gemini": "Gemini",
@@ -50,6 +52,164 @@ LLM_PROVIDER_LABELS = {
     "mock": "Mock",
 }
 DEEPSEEK_MODEL_OPTIONS = ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "custom"]
+
+
+GLOBAL_CSS = """
+<style>
+    .block-container {
+        max-width: 1180px;
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+    h1, h2, h3 {
+        letter-spacing: 0;
+    }
+    .hero-panel {
+        padding: 2rem 2.2rem;
+        border: 1px solid #e6e9ef;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #f8fbff 0%, #ffffff 48%, #f6f8fb 100%);
+        box-shadow: 0 14px 34px rgba(15, 23, 42, 0.06);
+        margin-bottom: 1.2rem;
+    }
+    .hero-title {
+        font-size: 2.7rem;
+        font-weight: 760;
+        line-height: 1.05;
+        margin-bottom: 0.3rem;
+        color: #172033;
+    }
+    .hero-subtitle {
+        font-size: 1.35rem;
+        font-weight: 620;
+        color: #344054;
+        margin-bottom: 0.85rem;
+    }
+    .hero-desc {
+        font-size: 1.02rem;
+        color: #475467;
+        max-width: 860px;
+        line-height: 1.65;
+    }
+    .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin: 0.9rem 0 1.1rem;
+    }
+    .badge-pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.28rem 0.62rem;
+        border: 1px solid #d7e3f4;
+        border-radius: 999px;
+        background: #f4f8ff;
+        color: #24558f;
+        font-size: 0.82rem;
+        font-weight: 650;
+        white-space: nowrap;
+    }
+    .section-title {
+        margin-top: 1.3rem;
+        margin-bottom: 0.8rem;
+        padding-left: 0.75rem;
+        border-left: 4px solid #2f80ed;
+        font-size: 1.2rem;
+        font-weight: 730;
+        color: #172033;
+    }
+    .app-card {
+        min-height: 134px;
+        padding: 1rem 1.05rem;
+        border: 1px solid #e6e9ef;
+        border-radius: 12px;
+        background: #ffffff;
+        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.055);
+        margin-bottom: 0.85rem;
+    }
+    .app-card h4 {
+        margin: 0 0 0.45rem;
+        color: #172033;
+        font-size: 1rem;
+    }
+    .app-card p {
+        margin: 0;
+        color: #5d6678;
+        line-height: 1.55;
+        font-size: 0.92rem;
+    }
+    .soft-card {
+        padding: 1rem 1.05rem;
+        border: 1px solid #e6e9ef;
+        border-radius: 12px;
+        background: #fbfcfe;
+        margin-bottom: 0.8rem;
+    }
+    .status-card {
+        padding: 0.9rem 1rem;
+        border-radius: 12px;
+        border: 1px solid #e6e9ef;
+        background: #ffffff;
+        margin-bottom: 0.75rem;
+    }
+    .status-card.success {
+        border-color: #a7e3c1;
+        background: #f1fbf5;
+    }
+    .status-card.warning {
+        border-color: #ffd89a;
+        background: #fff8eb;
+    }
+    .status-card.info {
+        border-color: #b9d7ff;
+        background: #f3f8ff;
+    }
+    .status-card.danger {
+        border-color: #ffc0c0;
+        background: #fff3f3;
+    }
+    .status-title {
+        font-weight: 730;
+        margin-bottom: 0.25rem;
+        color: #172033;
+    }
+    .status-text {
+        color: #4b5565;
+        line-height: 1.55;
+    }
+    .chunk-card {
+        padding: 1rem;
+        border: 1px solid #e6e9ef;
+        border-radius: 12px;
+        background: #ffffff;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.045);
+        margin-bottom: 0.85rem;
+    }
+    .chunk-meta {
+        color: #667085;
+        font-size: 0.86rem;
+        line-height: 1.65;
+        margin-top: 0.45rem;
+    }
+    .chunk-preview {
+        color: #344054;
+        font-size: 0.92rem;
+        line-height: 1.62;
+        margin-top: 0.55rem;
+        white-space: pre-wrap;
+    }
+    .sidebar-footer {
+        margin-top: 0.75rem;
+        padding: 0.8rem;
+        border-radius: 10px;
+        background: #f6f8fb;
+        border: 1px solid #e6e9ef;
+        color: #475467;
+        font-size: 0.82rem;
+        line-height: 1.55;
+    }
+</style>
+"""
 
 
 def _analysis_error_result(message: str) -> dict:
@@ -67,6 +227,47 @@ def _analysis_error_result(message: str) -> dict:
         "workflow_steps": [],
         "trace": {},
     }
+
+
+def render_badges(labels: list[str]) -> None:
+    badge_html = "".join(f'<span class="badge-pill">{escape(str(label))}</span>' for label in labels)
+    st.markdown(f'<div class="badge-row">{badge_html}</div>', unsafe_allow_html=True)
+
+
+def render_section_title(title: str) -> None:
+    st.markdown(f'<div class="section-title">{escape(title)}</div>', unsafe_allow_html=True)
+
+
+def render_feature_card(title: str, text: str) -> None:
+    st.markdown(
+        f"""
+        <div class="app-card">
+            <h4>{escape(title)}</h4>
+            <p>{escape(text)}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_status_card(title: str, text: str, status: str = "info") -> None:
+    st.markdown(
+        f"""
+        <div class="status-card {status}">
+            <div class="status-title">{escape(title)}</div>
+            <div class="status-text">{escape(text)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def format_bool(value) -> str:
+    if value is True:
+        return "是"
+    if value is False:
+        return "否"
+    return "-"
 
 
 def _split_analysis_report(full_report: str) -> dict:
@@ -257,40 +458,48 @@ def render_agent_trace(result: dict) -> None:
     if not trace:
         return
 
-    st.subheader("Trace 运行摘要")
+    render_section_title("Trace 运行摘要")
     summary_columns = st.columns(4)
     summary_columns[0].metric("run_id", trace.get("run_id", "-"))
-    summary_columns[1].metric("mode", trace.get("mode", "-"))
     duration = trace.get("duration_ms")
-    summary_columns[2].metric("总耗时", f"{duration:.2f} ms" if duration is not None else "-")
-    summary_columns[3].metric("final_status", trace.get("final_status", "-"))
+    summary_columns[1].metric("总耗时", f"{duration:.2f} ms" if duration is not None else "-")
+    summary_columns[2].metric("final_status", trace.get("final_status", "-"))
+    summary_columns[3].metric("fallback_used", format_bool(trace.get("fallback_used")))
 
-    st.write(
-        {
-            "resume_length": trace.get("resume_length"),
-            "job_description_length": trace.get("job_description_length"),
-            "top_k": trace.get("top_k"),
-            "used_rag": trace.get("used_rag"),
-            "used_rerank": trace.get("used_rerank"),
-            "rerank_method": trace.get("rerank_method"),
-            "embedding_provider": trace.get("embedding_provider"),
-            "used_fallback": trace.get("used_fallback"),
-            "llm_provider": trace.get("llm_provider"),
-            "llm_model": trace.get("llm_model"),
-            "use_mock_llm": trace.get("use_mock_llm"),
-            "fallback_to_mock": trace.get("fallback_to_mock"),
-            "fallback_used": trace.get("fallback_used"),
-            "original_provider": trace.get("original_provider"),
-            "provider_error": trace.get("provider_error"),
-        }
-    )
+    detail_columns = st.columns(4)
+    detail_columns[0].metric("llm_provider", trace.get("llm_provider") or "-")
+    detail_columns[1].metric("llm_model", trace.get("llm_model") or "-")
+    detail_columns[2].metric("review_passed", format_bool(trace.get("review_passed")))
+    detail_columns[3].metric("retrieval_attempts", trace.get("retrieval_attempts", "-"))
 
-    st.subheader("Trace Steps 明细")
+    with st.expander("查看 Trace 运行上下文", expanded=False):
+        st.write(
+            {
+                "mode": trace.get("mode"),
+                "resume_length": trace.get("resume_length"),
+                "job_description_length": trace.get("job_description_length"),
+                "top_k": trace.get("top_k"),
+                "used_rag": trace.get("used_rag"),
+                "used_rerank": trace.get("used_rerank"),
+                "rerank_method": trace.get("rerank_method"),
+                "embedding_provider": trace.get("embedding_provider"),
+                "used_fallback": trace.get("used_fallback"),
+                "use_mock_llm": trace.get("use_mock_llm"),
+                "fallback_to_mock": trace.get("fallback_to_mock"),
+                "original_provider": trace.get("original_provider"),
+                "provider_error": trace.get("provider_error"),
+            }
+        )
+
+    render_section_title("Trace Steps 明细")
     for index, step in enumerate(trace.get("steps", []), start=1):
-        title = f"Step {index}: {step.get('step_name', '')} / {step.get('tool_name', '')}"
+        status = "成功" if step.get("success") else "失败"
+        title = f"Step {index}: {step.get('step_name', '')} / {step.get('tool_name', '')} / {status}"
         with st.expander(title):
-            st.write(f"success：{'成功' if step.get('success') else '失败'}")
-            st.write(f"duration_ms：{step.get('duration_ms', 0):.2f}")
+            step_columns = st.columns(3)
+            step_columns[0].metric("success", status)
+            step_columns[1].metric("duration_ms", f"{step.get('duration_ms', 0):.2f}")
+            step_columns[2].metric("tool", step.get("tool_name", "-"))
             st.write(f"message：{step.get('message', '')}")
             st.markdown("**input_summary**")
             st.json(step.get("input_summary") or {})
@@ -299,8 +508,8 @@ def render_agent_trace(result: dict) -> None:
             if step.get("error"):
                 st.error(step["error"])
 
-    st.subheader("Trace JSON")
-    st.json(trace)
+    with st.expander("Trace JSON", expanded=False):
+        st.json(trace)
     trace_json = json.dumps(trace, ensure_ascii=False, indent=2)
     run_id = trace.get("run_id", "unknown")
     st.download_button(
@@ -315,6 +524,131 @@ def render_agent_trace(result: dict) -> None:
         st.warning(f"Trace 已在页面生成，但保存到本地失败：{result['trace_save_error']}")
     elif result.get("trace_path"):
         st.caption(f"Trace 已保存：{result['trace_path']}")
+
+
+def render_result_summary_cards(
+    result: dict,
+    analysis_mode: str,
+    selected_llm_provider: str,
+    result_rag_enabled: bool,
+    result_agent_workflow_enabled: bool,
+) -> None:
+    review_result = result.get("review_result") or {}
+    review_passed = review_result.get("review_passed")
+    columns = st.columns(3)
+    columns[0].metric("当前模式", analysis_mode)
+    columns[1].metric("LLM Provider", result.get("llm_provider") or selected_llm_provider)
+    columns[2].metric("使用 RAG", format_bool(result_rag_enabled or result.get("api_used_rag")))
+    columns = st.columns(3)
+    columns[0].metric("使用 Rerank", format_bool(result.get("used_rerank")))
+    columns[1].metric("Query Refinement", format_bool(result.get("query_refinement_used")))
+    columns[2].metric("Reviewer", format_bool(review_passed) if result_agent_workflow_enabled else "-")
+
+
+def render_reviewer_result(review_result: dict) -> None:
+    if not review_result:
+        return
+
+    review_passed = review_result.get("review_passed")
+    if review_passed is True:
+        render_status_card("Reviewer 审核通过", review_result.get("review_summary", ""), "success")
+    elif review_passed is False:
+        render_status_card("Reviewer 审核未通过", review_result.get("review_summary", ""), "warning")
+    else:
+        render_status_card("Reviewer 未执行", "本次结果没有返回 reviewer 审核状态。", "info")
+
+    with st.expander("查看 Reviewer 审核明细", expanded=(review_passed is False)):
+        missing = review_result.get("missing_points", [])
+        risks = review_result.get("risk_notes", [])
+        evidence = review_result.get("evidence_usage", "")
+        suggestions = review_result.get("improvement_suggestions", [])
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**missing_points**")
+            if missing:
+                for point in missing:
+                    st.markdown(f"- {point}")
+            else:
+                st.caption("未发现明显缺失项。")
+            st.markdown("**evidence_usage**")
+            st.write(evidence or "未返回")
+        with col2:
+            st.markdown("**risk_notes**")
+            if risks:
+                for risk in risks:
+                    st.markdown(f"- {risk}")
+            else:
+                st.caption("未返回风险提示。")
+            st.markdown("**improvement_suggestions**")
+            if suggestions:
+                for suggestion in suggestions:
+                    st.markdown(f"- {suggestion}")
+            else:
+                st.caption("未返回改进建议。")
+
+
+def render_rag_sources(rag_sources: list[dict]) -> None:
+    with st.expander("查看 RAG 检索片段", expanded=True):
+        show_full_rag_chunks = st.checkbox(
+            "显示完整 RAG 片段内容",
+            value=False,
+            key="show_full_rag_chunks",
+        )
+
+        for index, source in enumerate(rag_sources, start=1):
+            chunk_text = source.get("text") or source.get("content") or ""
+            preview_text = chunk_text
+            if not show_full_rag_chunks and len(chunk_text) > 420:
+                preview_text = f"{chunk_text[:420]}……"
+            distance = source.get("distance")
+            distance_text = f"{distance:.4f}" if distance is not None else "未返回"
+            rerank_score = source.get("rerank_score")
+            rerank_text = f"{rerank_score:.4f}" if rerank_score is not None else "-"
+            keyword_hits = source.get("keyword_hits", [])
+            keyword_text = ", ".join(str(item) for item in keyword_hits) if keyword_hits else "-"
+            section_bonus = source.get("section_bonus")
+            section_bonus_text = f"{section_bonus:.4f}" if section_bonus is not None else "-"
+            section = escape(str(source.get("section", "unknown")))
+            chunk_id = escape(str(source.get("chunk_id", source.get("chunk_index", index))))
+            chunk_length = escape(str(source.get("chunk_length", len(chunk_text))))
+
+            st.markdown(
+                f"""
+                <div class="chunk-card">
+                    <div>
+                        <span class="badge-pill">片段 {index}</span>
+                        <span class="badge-pill">section: {section}</span>
+                    </div>
+                    <div class="chunk-meta">
+                        chunk_id: {chunk_id}
+                        · chunk_length: {chunk_length}
+                        · distance: {escape(distance_text)}
+                        · rerank_score: {escape(rerank_text)}
+                        · section_bonus: {escape(section_bonus_text)}
+                    </div>
+                    <div class="chunk-meta">keyword_hits: {escape(keyword_text)}</div>
+                    <div class="chunk-preview">{escape(preview_text)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+def render_workflow_steps(steps: list[dict]) -> None:
+    with st.expander("查看 Agent Workflow Steps", expanded=True):
+        for index, step in enumerate(steps, start=1):
+            status = "成功" if step.get("success") else "失败"
+            render_status_card(
+                f"Step {index}: {step.get('step_name', '')}",
+                f"tool_name：{step.get('tool_name', '')} · success：{status} · message：{step.get('message', '')}",
+                "success" if step.get("success") else "warning",
+            )
+            data_summary = step.get("data_summary") or {}
+            if data_summary:
+                st.json(data_summary)
+            if step.get("error"):
+                st.error(step["error"])
 
 
 def read_txt_file(file_bytes: bytes) -> str:
@@ -405,37 +739,80 @@ def read_uploaded_resume_file(uploaded_file) -> str:
 
 
 def render_home_page() -> None:
-    st.title("AI Resume Agent / 简历与岗位匹配分析助手")
-    st.write(
-        "这是一个基于 Streamlit、Gemini API、ChromaDB 和 RAG Workflow 的简历与岗位匹配分析工具。"
-        "用户可以上传简历并输入岗位 JD，系统会分析岗位要求、个人能力、匹配度和简历优化建议。"
+    st.markdown(
+        """
+        <div class="hero-panel">
+            <div class="hero-title">AI Resume Agent</div>
+            <div class="hero-subtitle">简历与岗位匹配分析助手</div>
+            <div class="hero-desc">
+                一个面向 AI 应用开发求职场景的简历与岗位匹配分析工具，
+                支持 RAG 检索增强、Agent Workflow、Lightweight Harness、Trace 可观测和 Eval 评测。
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    st.info("当前项目定位是 AI 应用工程化 MVP / RAG Workflow 原型，不是完整生产级多工具 Agent。")
+    render_badges(
+        [
+            APP_VERSION_LABEL,
+            "RAG + Rerank",
+            "Agent Workflow",
+            "Reviewer Agent",
+            "Gemini / DeepSeek Ready",
+            "FastAPI Mode",
+            "Trace + Eval",
+        ]
+    )
+    render_status_card(
+        "项目定位",
+        "当前项目定位是 AI 应用工程化 MVP / RAG Workflow 原型 / Lightweight Agent Harness Demo，"
+        "适合学习和面试展示，不是完整生产级 Agent 平台。",
+        "info",
+    )
 
-    st.subheader("当前能力")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("- txt / pdf / docx 简历解析")
-        st.markdown("- 岗位 JD 输入")
-        st.markdown("- 普通 LLM 分析")
-    with col2:
-        st.markdown("- RAG 检索增强分析")
-        st.markdown("- ChromaDB 向量检索")
-        st.markdown("- local / local_bge / gemini embedding")
-    with col3:
-        st.markdown("- RAG 召回片段查看")
-        st.markdown("- Markdown 报告导出")
-        st.markdown("- 示例数据演示")
+    render_section_title("核心能力")
+    feature_cards = [
+        ("简历解析", "支持 txt / pdf / docx 简历文本读取，为后续分析和检索提供统一输入。"),
+        ("RAG 检索增强", "基于 ChromaDB + local_bge 等 embedding provider 召回与岗位 JD 相关的简历片段。"),
+        ("Lightweight Rerank", "在向量召回后使用关键词、section bonus 和 distance 做轻量二次排序。"),
+        ("Agent Workflow", "将 RAG 检索、LLM 分析、报告生成等能力封装为固定工具调用链路。"),
+        ("Reviewer Agent", "对生成报告做规则化审核，提示缺失结构、证据使用和潜在风险。"),
+        ("Trace / Observability", "记录 workflow steps、Provider 状态、耗时、fallback 和错误摘要。"),
+        ("Eval Runner", "使用 Recall@K、MRR、section / keyword hit 等指标验证工程链路稳定性。"),
+        ("Multi-Model Provider", "支持 Gemini、DeepSeek、OpenAI Compatible 和 Mock Provider，便于演示与降级。"),
+    ]
+    for row_start in range(0, len(feature_cards), 4):
+        columns = st.columns(4)
+        for column, (title, text) in zip(columns, feature_cards[row_start : row_start + 4]):
+            with column:
+                render_feature_card(title, text)
 
-    st.subheader("推荐演示路径")
-    st.markdown("1. 进入“示例演示”，加载脱敏样例。")
-    st.markdown("2. 进入“简历岗位匹配分析”，选择普通模式或 RAG 模式。")
-    st.markdown("3. 查看四个分析 Tab、RAG 召回片段和 Markdown 导出报告。")
+    render_section_title("推荐演示路径")
+    step_columns = st.columns(3)
+    demo_steps = [
+        ("Step 1", "进入示例演示，加载脱敏样例。"),
+        ("Step 2", "进入简历岗位匹配分析，选择 Agent Workflow，并启用 RAG + Rerank。"),
+        ("Step 3", "查看 RAG 召回片段、Reviewer 审核结果、Trace JSON 和 Markdown 报告。"),
+    ]
+    for column, (title, text) in zip(step_columns, demo_steps):
+        with column:
+            render_feature_card(title, text)
 
 
 def render_analysis_page() -> None:
-    st.title("简历岗位匹配分析")
-    st.write("按步骤输入岗位 JD 和简历内容，可选择普通分析或 RAG 检索增强分析。")
+    st.markdown(
+        """
+        <div class="hero-panel">
+            <div class="hero-title">简历岗位匹配分析</div>
+            <div class="hero-subtitle">从 JD 到证据召回，再到 Agent Workflow 报告</div>
+            <div class="hero-desc">
+                支持普通 LLM 基线、RAG 检索增强和 Agent Workflow 三种模式。
+                面试演示建议选择 Agent Workflow，并开启 RAG + 轻量 Rerank。
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     backend_mode = st.session_state.get("backend_runtime_mode", LOCAL_BACKEND_MODE)
     api_base_url = st.session_state.get("api_base_url", DEFAULT_API_BASE_URL)
@@ -444,34 +821,51 @@ def render_analysis_page() -> None:
         get_llm_provider_from_env(),
     )
     fallback_to_mock = st.session_state.get("fallback_to_mock", True)
-    st.caption(f"当前运行后端模式：{backend_mode}")
-    st.caption(f"当前 LLM Provider：{selected_llm_provider}")
-
     current_embedding_provider = get_embedding_provider()
-
-    st.caption("RAG 模式会先从简历中检索与岗位最相关的片段，再交给大模型生成分析结果。")
-    st.caption("RAG 模式支持本地 Embedding fallback。Gemini Embedding 免费 API 层级可能出现请求频率限制，如失败会自动使用本地向量。")
-    st.caption(f"当前 RAG 向量模式：{current_embedding_provider}")
+    render_badges(
+        [
+            f"运行模式：{backend_mode}",
+            f"LLM：{LLM_PROVIDER_LABELS.get(selected_llm_provider, selected_llm_provider)}",
+            f"Embedding：{current_embedding_provider}",
+            "RAG 可解释召回",
+            "Trace 可下载",
+        ]
+    )
+    render_status_card(
+        "RAG 说明",
+        "RAG 模式会先从简历中检索与岗位最相关的片段，再交给大模型生成分析结果；"
+        "如果在线 embedding 不可用，项目会按已有 fallback 逻辑使用本地向量。",
+        "info",
+    )
     if current_embedding_provider == "local_bge":
         st.caption("首次使用本地语义模型可能需要下载模型，耗时较长；下载完成后会使用本地缓存。")
 
     if st.session_state.get("demo_mode_enabled"):
         st.info("当前已加载示例数据。你仍然可以上传自己的简历文件，或直接编辑下方文本框内容。")
 
-    st.subheader("Step 1：输入岗位 JD")
-    job_description = st.text_area(
-        "请输入岗位描述",
-        height=220,
-        placeholder="例如：粘贴 AI 应用开发实习生的岗位描述。",
-        key="job_description_input",
-    )
-
-    st.subheader("Step 2：上传或填写简历")
-    uploaded_file = st.file_uploader(
-        "上传个人简历 / 经历文件",
-        type=["txt", "pdf", "docx"],
-        help="当前支持 txt、pdf、docx 文件。PDF 需为可复制文字的文本型 PDF。",
-    )
+    render_section_title("输入材料")
+    input_col1, input_col2 = st.columns(2)
+    with input_col1:
+        st.markdown('<div class="soft-card"><strong>岗位 JD 输入</strong><br>粘贴目标岗位描述，用于匹配分析和 RAG query。</div>', unsafe_allow_html=True)
+        job_description = st.text_area(
+            "请输入岗位描述",
+            height=260,
+            placeholder="例如：粘贴 AI 应用开发实习生的岗位描述。",
+            key="job_description_input",
+        )
+    with input_col2:
+        st.markdown('<div class="soft-card"><strong>简历输入 / 上传</strong><br>上传文件优先；也可以直接粘贴项目经历文本。</div>', unsafe_allow_html=True)
+        uploaded_file = st.file_uploader(
+            "上传个人简历 / 经历文件",
+            type=["txt", "pdf", "docx"],
+            help="当前支持 txt、pdf、docx 文件。PDF 需为可复制文字的文本型 PDF。",
+        )
+        resume_text_input = st.text_area(
+            "请输入个人简历或项目经历",
+            height=220,
+            placeholder="如果没有上传文件，可以在这里粘贴你的专业技能、项目经历和自我评价内容。",
+            key="resume_text_input",
+        )
 
     uploaded_resume_text = ""
     uploaded_source_name = ""
@@ -496,17 +890,17 @@ def render_analysis_page() -> None:
             with st.expander("查看上传文件内容预览"):
                 st.write(uploaded_resume_text[:1500])
 
-    resume_text_input = st.text_area(
-        "请输入个人简历或项目经历",
-        height=220,
-        placeholder="如果没有上传文件，可以在这里粘贴你的专业技能、项目经历和自我评价内容。",
-        key="resume_text_input",
-    )
-
     final_resume_text = uploaded_resume_text.strip() if uploaded_resume_text.strip() else resume_text_input.strip()
     source_name = uploaded_source_name if uploaded_resume_text.strip() else "手动输入内容"
 
-    st.subheader("Step 3：选择分析模式并生成报告")
+    render_section_title("选择分析模式")
+    mode_cols = st.columns(3)
+    with mode_cols[0]:
+        render_feature_card("普通 LLM 分析", "适合作为基线对比，直接将简历和 JD 交给模型分析。")
+    with mode_cols[1]:
+        render_feature_card("RAG 检索增强分析", "适合查看证据召回，能展示模型参考了哪些简历片段。")
+    with mode_cols[2]:
+        render_feature_card("Agent Workflow 分析", "推荐演示模式，包含工具调用链、Reviewer 和 Trace。")
     analysis_mode = st.radio(
         "分析模式",
         ["普通 LLM 分析", "RAG 检索增强分析", "Agent Workflow 分析"],
@@ -629,16 +1023,26 @@ def render_analysis_page() -> None:
             st.session_state["last_analysis_result"] = result
             st.session_state["last_analysis_rag_enabled"] = rag_enabled
             st.session_state["last_analysis_agent_workflow_enabled"] = agent_workflow_enabled
+            st.session_state["last_analysis_mode"] = analysis_mode
 
     result = st.session_state.get("last_analysis_result")
     result_rag_enabled = st.session_state.get("last_analysis_rag_enabled", False)
     result_agent_workflow_enabled = st.session_state.get("last_analysis_agent_workflow_enabled", False)
+    result_analysis_mode = st.session_state.get("last_analysis_mode", analysis_mode)
 
     if result:
         if result.get("error"):
             st.error(result["error"])
         else:
+            render_section_title("分析结果总览")
             st.success("分析完成")
+            render_result_summary_cards(
+                result,
+                result_analysis_mode,
+                selected_llm_provider,
+                result_rag_enabled,
+                result_agent_workflow_enabled,
+            )
             st.caption(
                 f"LLM：{result.get('llm_provider', selected_llm_provider)}"
                 f" / {result.get('llm_model') or 'default model'}"
@@ -651,18 +1055,17 @@ def render_analysis_page() -> None:
             if result.get("api_hybrid_mode"):
                 st.info("RAG retrieve API 已完成；当前 API 尚无独立 RAG 分析接口，LLM 分析仍走本地逻辑。")
             if result_agent_workflow_enabled and result.get("workflow_steps"):
-                with st.expander("查看 Agent Workflow Steps", expanded=True):
-                    for index, step in enumerate(result["workflow_steps"], start=1):
-                        status = "成功" if step.get("success") else "失败"
-                        st.markdown(f"**Step {index}: {step.get('step_name', '')}**")
-                        st.write(f"tool_name：{step.get('tool_name', '')}")
-                        st.write(f"success：{status}")
-                        st.write(f"message：{step.get('message', '')}")
-                        data_summary = step.get("data_summary") or {}
-                        if data_summary:
-                            st.json(data_summary)
-                        if step.get("error"):
-                            st.error(step["error"])
+                render_workflow_steps(result["workflow_steps"])
+
+            # --- Harness: review result ---
+            review_result = result.get("review_result") or {}
+            render_reviewer_result(review_result)
+
+            # --- Harness: query refinement ---
+            if result.get("query_refinement_used"):
+                st.info(
+                    f"初次 RAG 检索质量不足，已自动重试（共 {result.get('retrieval_attempts', 2)} 次检索）。"
+                )
 
             if result_rag_enabled and result.get("retrieved_chunk_count") is not None:
                 actual_count = result.get("retrieved_chunk_count", 0)
@@ -683,43 +1086,7 @@ def render_analysis_page() -> None:
 
             rag_sources = result.get("rag_sources", [])
             if result_rag_enabled and rag_sources:
-                with st.expander("查看 RAG 检索片段"):
-                    show_full_rag_chunks = st.checkbox(
-                        "显示完整 RAG 片段内容",
-                        value=False,
-                        key="show_full_rag_chunks",
-                    )
-
-                    for index, source in enumerate(rag_sources, start=1):
-                        st.markdown(f"**片段 {index}**")
-                        st.write(f"source：{source.get('source', 'resume')}")
-                        st.write(f"file_name：{source.get('file_name', source.get('source_name', '未知来源'))}")
-                        st.write(f"chunk_id：{source.get('chunk_id', source.get('chunk_index', index))}")
-                        st.write(f"chunk_length：{source.get('chunk_length', len(source.get('text', '')))}")
-                        st.write(f"section：{source.get('section', 'unknown')}")
-
-                        if source.get("distance") is not None:
-                            st.write(f"检索距离 distance：{source['distance']:.4f}（数值越小通常表示越相关）")
-                        else:
-                            st.write("distance：未返回")
-
-                        if source.get("rerank_score") is not None:
-                            st.write(f"rerank_score：{source['rerank_score']:.4f}")
-                            st.write(f"keyword_hits：{source.get('keyword_hits', [])}")
-                            st.write(f"section_bonus：{source.get('section_bonus', 0):.4f}")
-
-                        chunk_text = source.get("text", "")
-                        preview_text = chunk_text
-                        if not show_full_rag_chunks and len(chunk_text) > 400:
-                            preview_text = f"{chunk_text[:400]}……"
-
-                        st.text_area(
-                            f"片段内容预览 {index}",
-                            value=preview_text,
-                            height=140,
-                            disabled=True,
-                            key=f"rag_source_{index}",
-                        )
+                render_rag_sources(rag_sources)
 
             report_markdown = build_export_report(result, rag_enabled=result_rag_enabled)
             st.download_button(
@@ -803,38 +1170,63 @@ def render_rag_detail_page() -> None:
 
 
 def render_about_page() -> None:
-    st.title("关于项目 / 后续计划")
+    st.markdown(
+        """
+        <div class="hero-panel">
+            <div class="hero-title">关于项目 / 后续计划</div>
+            <div class="hero-subtitle">一个可运行、可验证、可讲解的 AI 应用工程化 Demo</div>
+            <div class="hero-desc">
+                当前版本重点展示 RAG Workflow、Tool Calling、Lightweight Agent Harness、
+                Trace、Eval 和 FastAPI 接口雏形，不包装成生产级平台。
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    st.subheader("当前项目已完成")
-    st.markdown("- 文件解析：txt / pdf / docx")
-    st.markdown("- Prompt 分析：普通分析和 RAG Prompt")
-    st.markdown("- RAG 检索：chunk、embedding、top_k 召回")
-    st.markdown("- ChromaDB 本地向量库")
-    st.markdown("- local embedding fallback")
-    st.markdown("- 示例模式")
-    st.markdown("- Markdown 报告导出")
-    st.markdown("- 基础测试脚本 simple_test.py")
-    st.markdown("- Tool Calling / Agent Workflow / Trace")
-    st.markdown("- Lightweight Rerank / RAG Evaluation")
-    st.markdown("- FastAPI 接口与 local / API 双模式")
+    render_section_title("项目已完成能力")
+    completed = [
+        ("输入解析", "txt / pdf / docx 简历解析，支持示例数据快速演示。"),
+        ("RAG Workflow", "section-aware chunking、ChromaDB 检索、local / local_bge / gemini embedding provider。"),
+        ("Agent Harness", "Tool Calling、Agent Workflow、Reviewer Agent、Bounded Query Refinement Loop。"),
+        ("可观测与评测", "Trace JSON、Workflow Steps、Eval Runner、RAG Evaluation Metrics。"),
+        ("模型与接口", "Gemini / DeepSeek / OpenAI Compatible / Mock Provider，支持 fallback_to_mock。"),
+        ("Demo 工程化", "Streamlit Demo、FastAPI Backend、local mode / API mode、Markdown 报告导出。"),
+    ]
+    for row_start in range(0, len(completed), 3):
+        columns = st.columns(3)
+        for column, (title, text) in zip(columns, completed[row_start : row_start + 3]):
+            with column:
+                render_feature_card(title, text)
 
-    st.subheader("当前不足")
-    st.markdown("- 当前更像 RAG Workflow，不是完整多工具 Agent。")
-    st.markdown("- Gemini API 可能受地区和额度影响。")
-    st.markdown("- local hash embedding 语义能力有限。")
-    st.markdown("- Rerank 是规则方法，不是 cross-encoder。")
-    st.markdown("- Eval case 和 gold evidence 数量仍较少。")
-    st.markdown("- FastAPI 是接口 MVP，没有鉴权、数据库和任务队列。")
-    st.markdown("- API mode 的 RAG 报告生成仍有本地 LLM 调用。")
+    render_section_title("当前边界")
+    boundary_cols = st.columns(2)
+    boundaries = [
+        "没有用户登录",
+        "没有数据库历史记录",
+        "没有云部署",
+        "没有生产级权限控制",
+        "没有复杂 autonomous planning",
+        "没有沙盒执行环境",
+    ]
+    for index, item in enumerate(boundaries):
+        with boundary_cols[index % 2]:
+            render_status_card(item, "当前实现保持 MVP 范围，用于本地演示和面试讲解。", "warning")
 
-    st.subheader("后续计划")
-    st.markdown("- metadata 过滤")
-    st.markdown("- cross-encoder rerank")
-    st.markdown("- 完整 API 化 RAG 报告生成")
-    st.markdown("- 更严格的检索与答案质量评测")
-    st.markdown("- Trace 集中存储与查询")
-    st.markdown("- DeepSeek / OpenAI-compatible 模型切换")
-    st.markdown("- 更完整测试")
+    render_section_title("后续方向")
+    future_items = [
+        ("Hybrid Search", "结合关键词检索和向量检索，提升召回稳定性。"),
+        ("Cross-encoder Rerank", "用更强的 reranker 替代当前 rule-based rerank。"),
+        ("More Eval Cases", "增加更多岗位、简历样例和 gold evidence。"),
+        ("Docker Deployment", "补充可复现部署环境。"),
+        ("Memory MVP", "保存用户偏好、历史 JD 和报告版本。"),
+        ("Sandbox / Permission Control", "为更复杂工具调用增加权限和执行边界。"),
+    ]
+    for row_start in range(0, len(future_items), 3):
+        columns = st.columns(3)
+        for column, (title, text) in zip(columns, future_items[row_start : row_start + 3]):
+            with column:
+                render_feature_card(title, text)
 
 
 st.set_page_config(
@@ -842,9 +1234,20 @@ st.set_page_config(
     page_icon="🤖",
     layout="wide",
 )
+st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 
 with st.sidebar:
-    st.header("功能入口")
+    st.header("AI Resume Agent")
+    st.markdown(
+        f"""
+        <div class="sidebar-footer">
+            <strong>当前版本</strong><br>{APP_VERSION_LABEL}<br><br>
+            建议面试演示使用 Agent Workflow + RAG + Rerank。
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.subheader("功能入口")
     page_options = [
         "首页 / 项目介绍",
         "简历岗位匹配分析",
@@ -872,6 +1275,7 @@ with st.sidebar:
         key="backend_runtime_mode",
         help="本地模式直接调用 Python；API 模式通过 HTTP 调用 FastAPI。",
     )
+    st.caption(f"当前运行模式：{backend_mode}")
     if backend_mode == API_BACKEND_MODE:
         if "api_base_url" not in st.session_state:
             st.session_state["api_base_url"] = DEFAULT_API_BASE_URL
@@ -912,6 +1316,7 @@ with st.sidebar:
     )
     selected_llm_provider = label_to_provider[selected_label]
     st.session_state["selected_llm_provider"] = selected_llm_provider
+    st.caption(f"当前模型：{selected_label}")
 
     # DeepSeek model selector
     selected_llm_model: str | None = None
@@ -993,8 +1398,15 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("AI 应用工程化 MVP / RAG Workflow 原型")
-    st.caption(f"Embedding Provider：{get_embedding_provider()}")
+    st.markdown(
+        f"""
+        <div class="sidebar-footer">
+            <strong>Embedding Provider</strong><br>{get_embedding_provider()}<br><br>
+            本项目是 AI 应用工程化 MVP，不是生产级 Agent 平台。
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 if page == "首页 / 项目介绍":
     render_home_page()
